@@ -294,6 +294,9 @@ func processChannelError(c *gin.Context, channelId int, channelType int, channel
 	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
 	// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
 	common.LogError(c, fmt.Sprintf("relay error (channel #%d, status code: %d): %s", channelId, err.StatusCode, err.Error.Message))
+	common.SendEmail(channelName+" 渠道调用异常!", "617498836@qq.com",
+		fmt.Sprintf("通道 %s 调用失败，状态码 %d，错误信息 %s", channelName, err.StatusCode, err.Error.Message))
+
 	if service.ShouldDisableChannel(channelType, err) && autoBan {
 		service.DisableChannel(channelId, channelName, err.Error.Message)
 	}

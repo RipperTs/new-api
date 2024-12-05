@@ -120,7 +120,7 @@ var GeminiSafetySetting = GetEnvOrDefaultString("GEMINI_SAFETY_SETTING", "BLOCK_
 var CohereSafetySetting = GetEnvOrDefaultString("COHERE_SAFETY_SETTING", "NONE")
 
 const (
-	RequestIdKey = "X-Oneapi-Request-Id"
+	RequestIdKey = "X-AO-Request-Id"
 )
 
 const (

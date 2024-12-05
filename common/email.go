@@ -1,8 +1,10 @@
 package common
 
 import (
+	"crypto/md5"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"net/smtp"
 	"strings"
@@ -29,6 +31,14 @@ func SendEmail(subject string, receiver string, content string) error {
 		"Message-ID: %s\r\n"+ // 添加 Message-ID 头
 		"Content-Type: text/html; charset=UTF-8\r\n\r\n%s\r\n",
 		receiver, SystemName, SMTPFrom, encodedSubject, time.Now().Format(time.RFC1123Z), generateMessageID(), content))
+
+	hash := md5.Sum([]byte(content))
+	cacheMD5Key := "email_cache:" + hex.EncodeToString(hash[:])
+	redisValue, _ := RedisGet(cacheMD5Key)
+	if redisValue != "" {
+		return nil
+	}
+
 	auth := smtp.PlainAuth("", SMTPAccount, SMTPToken, SMTPServer)
 	addr := fmt.Sprintf("%s:%d", SMTPServer, SMTPPort)
 	to := strings.Split(receiver, ";")
@@ -77,5 +87,6 @@ func SendEmail(subject string, receiver string, content string) error {
 	} else {
 		err = smtp.SendMail(addr, auth, SMTPAccount, to, mail)
 	}
+	_ = RedisSet(cacheMD5Key, "1", time.Duration(60)*time.Second)
 	return err
 }
