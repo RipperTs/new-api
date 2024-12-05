@@ -14,6 +14,7 @@ import {
 import '../index.css';
 
 import {
+  IconAt,
   IconCalendarClock, IconChecklistStroked,
   IconComment, IconCommentStroked,
   IconCreditCard,
@@ -51,33 +52,18 @@ const SiderBar = () => {
     channel: '/channel',
     token: '/token',
     redemption: '/redemption',
-    topup: '/topup',
     user: '/user',
     log: '/log',
     midjourney: '/midjourney',
     setting: '/setting',
     about: '/about',
-    chat: '/chat',
     detail: '/detail',
     pricing: '/pricing',
     task: '/task',
-    playground: '/playground',
   };
 
   const headerButtons = useMemo(
     () => [
-      {
-        text: 'Playground',
-        itemKey: 'playground',
-        to: '/playground',
-        icon: <IconCommentStroked />,
-      },
-      {
-        text: '模型价格',
-        itemKey: 'pricing',
-        to: '/pricing',
-        icon: <IconPriceTag />,
-      },
       {
         text: '渠道',
         itemKey: 'channel',
@@ -86,33 +72,10 @@ const SiderBar = () => {
         className: isAdmin() ? 'semi-navigation-item-normal' : 'tableHiddle',
       },
       {
-        text: '聊天',
-        itemKey: 'chat',
-        // to: '/chat',
-        items: chatItems,
-        icon: <IconComment />,
-        // className: localStorage.getItem('chat_link')
-        //   ? 'semi-navigation-item-normal'
-        //   : 'tableHiddle',
-      },
-      {
         text: '令牌',
         itemKey: 'token',
         to: '/token',
         icon: <IconKey />,
-      },
-      {
-        text: '兑换码',
-        itemKey: 'redemption',
-        to: '/redemption',
-        icon: <IconGift />,
-        className: isAdmin() ? 'semi-navigation-item-normal' : 'tableHiddle',
-      },
-      {
-        text: '钱包',
-        itemKey: 'topup',
-        to: '/topup',
-        icon: <IconCreditCard />,
       },
       {
         text: '用户管理',
@@ -137,38 +100,13 @@ const SiderBar = () => {
             ? 'semi-navigation-item-normal'
             : 'tableHiddle',
       },
-      {
-        text: '绘图',
-        itemKey: 'midjourney',
-        to: '/midjourney',
-        icon: <IconImage />,
-        className:
-          localStorage.getItem('enable_drawing') === 'true'
-            ? 'semi-navigation-item-normal'
-            : 'tableHiddle',
-      },
-      {
-        text: '异步任务',
-        itemKey: 'task',
-        to: '/task',
-        icon: <IconChecklistStroked />,
-        className:
-            localStorage.getItem('enable_task') === 'true'
-                ? 'semi-navigation-item-normal'
-                : 'tableHiddle',
-      },
+
       {
         text: '设置',
         itemKey: 'setting',
         to: '/setting',
         icon: <IconSetting />,
-      },
-      // {
-      //     text: '关于',
-      //     itemKey: 'about',
-      //     to: '/about',
-      //     icon: <IconAt/>
-      // }
+      }
     ],
     [
       localStorage.getItem('enable_data_export'),

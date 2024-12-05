@@ -353,7 +353,8 @@ const PersonalSetting = () => {
                                             <Tag color='blue'>普通用户</Tag>
                                         )
                                     }
-                                ></Card.Meta>
+                                >
+                                </Card.Meta>
                             }
                             headerExtraContent={
                                 <>
@@ -365,13 +366,7 @@ const PersonalSetting = () => {
                             }
                             footer={
                                 <Descriptions row>
-                                    <Descriptions.Item itemKey='当前余额'>
-                                        {renderQuota(userState?.user?.quota)}
-                                    </Descriptions.Item>
-                                    <Descriptions.Item itemKey='历史消耗'>
-                                        {renderQuota(userState?.user?.used_quota)}
-                                    </Descriptions.Item>
-                                    <Descriptions.Item itemKey='请求次数'>
+                                    <Descriptions.Item itemKey='累计请求次数'>
                                         {userState.user?.request_count}
                                     </Descriptions.Item>
                                 </Descriptions>
@@ -392,45 +387,6 @@ const PersonalSetting = () => {
                                         </Tag>
                                     ))}
                                 </Space>
-                            </div>
-                        </Card>
-                        <Card
-                            style={{marginTop: 10}}
-                            footer={
-                                <div>
-                                    <Typography.Text>邀请链接</Typography.Text>
-                                    <Input
-                                        style={{marginTop: 10}}
-                                        value={affLink}
-                                        onClick={handleAffLinkClick}
-                                        readOnly
-                                    />
-                                </div>
-                            }
-                        >
-                            <Typography.Title heading={6}>邀请信息</Typography.Title>
-                            <div style={{marginTop: 10}}>
-                                <Descriptions row>
-                                    <Descriptions.Item itemKey='待使用收益'>
-                    <span style={{color: 'rgba(var(--semi-red-5), 1)'}}>
-                      {renderQuota(userState?.user?.aff_quota)}
-                    </span>
-                                        <Button
-                                            type={'secondary'}
-                                            onClick={() => setOpenTransfer(true)}
-                                            size={'small'}
-                                            style={{marginLeft: 10}}
-                                        >
-                                            划转
-                                        </Button>
-                                    </Descriptions.Item>
-                                    <Descriptions.Item itemKey='总收益'>
-                                        {renderQuota(userState?.user?.aff_history_quota)}
-                                    </Descriptions.Item>
-                                    <Descriptions.Item itemKey='邀请人数'>
-                                        {userState?.user?.aff_count}
-                                    </Descriptions.Item>
-                                </Descriptions>
                             </div>
                         </Card>
                         <Card style={{marginTop: 10}}>

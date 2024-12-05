@@ -248,13 +248,6 @@ const LogsTable = () => {
       },
     },
     {
-      title: '类型',
-      dataIndex: 'type',
-      render: (text, record, index) => {
-        return <>{renderType(text)}</>;
-      },
-    },
-    {
       title: '模型',
       dataIndex: 'model_name',
       render: (text, record, index) => {
@@ -327,17 +320,6 @@ const LogsTable = () => {
       },
     },
     {
-      title: '花费',
-      dataIndex: 'quota',
-      render: (text, record, index) => {
-        return record.type === 0 || record.type === 2 ? (
-          <>{renderQuota(text, 6)}</>
-        ) : (
-          <></>
-        );
-      },
-    },
-    {
       title: '重试',
       dataIndex: 'retry',
       className: isAdmin() ? 'tableShow' : 'tableHiddle',
@@ -363,49 +345,7 @@ const LogsTable = () => {
         }
         return isAdminUser ? <div>{content}</div> : <></>;
       },
-    },
-    {
-      title: '详情',
-      dataIndex: 'content',
-      render: (text, record, index) => {
-        let other = getLogOther(record.other);
-        if (other == null || record.type !== 2) {
-          return (
-            <Paragraph
-              ellipsis={{
-                rows: 2,
-                showTooltip: {
-                  type: 'popover',
-                  opts: { style: { width: 240 } },
-                },
-              }}
-              style={{ maxWidth: 240 }}
-            >
-              {text}
-            </Paragraph>
-          );
-        }
-
-        // let content = renderModelPrice(
-        //   record.prompt_tokens,
-        //   record.completion_tokens,
-        //   other.model_ratio,
-        //   other.model_price,
-        //   other.completion_ratio,
-        //   other.group_ratio,
-        // );
-        return (
-            <Paragraph
-                ellipsis={{
-                  rows: 2,
-                }}
-                style={{ maxWidth: 240 }}
-            >
-              调用消费
-            </Paragraph>
-        );
-      },
-    },
+    }
   ];
 
   const [logs, setLogs] = useState([]);
@@ -678,9 +618,6 @@ const LogsTable = () => {
         <Header>
           <Spin spinning={loadingStat}>
             <Space>
-              <Tag color='green' size='large' style={{ padding: 15 }}>
-                总消耗额度: {renderQuota(stat.quota)}
-              </Tag>
               <Tag color='blue' size='large' style={{ padding: 15 }}>
                 RPM: {stat.rpm}
               </Tag>
