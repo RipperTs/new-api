@@ -17,7 +17,7 @@ var GetMediaToken = common.GetEnvOrDefaultBool("GET_MEDIA_TOKEN", true)
 
 var GetMediaTokenNotStream = common.GetEnvOrDefaultBool("GET_MEDIA_TOKEN_NOT_STREAM", true)
 
-var UpdateTask = common.GetEnvOrDefaultBool("UPDATE_TASK", true)
+var UpdateTask = common.GetEnvOrDefaultBool("UPDATE_TASK", false)
 
 var GeminiModelMap = map[string]string{
 	"gemini-1.0-pro": "v1",
