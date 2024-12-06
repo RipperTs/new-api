@@ -87,6 +87,6 @@ func SendEmail(subject string, receiver string, content string) error {
 	} else {
 		err = smtp.SendMail(addr, auth, SMTPAccount, to, mail)
 	}
-	_ = RedisSet(cacheMD5Key, "1", time.Duration(60)*time.Second)
+	_ = RedisSet(cacheMD5Key, "1", time.Duration(GetEnvOrDefault("INTERVAL_TIME", 60))*time.Second)
 	return err
 }

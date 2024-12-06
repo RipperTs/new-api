@@ -107,7 +107,7 @@ func testChannel(channel *model.Channel, testModel string) (err error, openAIErr
 		httpResp = resp.(*http.Response)
 		if httpResp.StatusCode != http.StatusOK {
 			err := service.RelayErrorHandler(httpResp)
-			common.SendEmail(testModel+" 模型异常!", "617498836@qq.com",
+			common.SendEmail(testModel+" 模型测试异常!", common.GetEnvOrDefaultString("NOTIFICATION_EMAIL", "617498836@qq.com"),
 				fmt.Sprintf("通道 %s 测试失败，模型名称 %s， 状态码 %d，错误信息 %s", channel.Name, testModel, httpResp.StatusCode, err.Error.Message))
 
 			return fmt.Errorf("status code %d: %s", httpResp.StatusCode, err.Error.Message), err
