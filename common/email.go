@@ -40,7 +40,13 @@ func SendEmail(subject string, receiver string, content string) error {
 		"Content-Type: text/html; charset=UTF-8\r\n\r\n%s\r\n",
 		receiver, SystemName, SMTPFrom, encodedSubject, time.Now().Format(time.RFC1123Z), id, content))
 
-	hash := md5.Sum([]byte(content))
+	// 只取前 36 个字符生成 MD5 缓存, 避免有request id的影响导致无法命中缓存
+	contentLen := len(content)
+	if contentLen > 36 {
+		contentLen = 36
+	}
+	truncatedContent := content[:contentLen]
+	hash := md5.Sum([]byte(truncatedContent))
 	cacheMD5Key := "email_cache:" + hex.EncodeToString(hash[:])
 	redisValue, _ := RedisGet(cacheMD5Key)
 	if redisValue != "" {
