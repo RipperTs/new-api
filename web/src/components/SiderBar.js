@@ -5,31 +5,21 @@ import { StatusContext } from '../context/Status';
 
 import {
   API,
-  getLogo,
-  getSystemName,
   isAdmin,
-  isMobile,
   showError,
 } from '../helpers';
 import '../index.css';
 
 import {
-  IconCalendarClock, IconChecklistStroked,
-  IconComment, IconCommentStroked,
-  IconCreditCard,
-  IconGift, IconHelpCircle,
+  IconCalendarClock,
   IconHistogram,
-  IconHome,
-  IconImage,
   IconKey,
   IconLayers,
-  IconPriceTag,
   IconSetting,
   IconUser
 } from '@douyinfe/semi-icons';
-import { Avatar, Dropdown, Layout, Nav, Switch } from '@douyinfe/semi-ui';
+import { Nav, Switch } from '@douyinfe/semi-ui';
 import { setStatusData } from '../helpers/data.js';
-import { stringToColor } from '../helpers/render.js';
 import { useSetTheme, useTheme } from '../context/Theme/index.js';
 import { StyleContext } from '../context/Style/index.js';
 
@@ -44,8 +34,6 @@ const SiderBar = () => {
   const [selectedKeys, setSelectedKeys] = useState(['home']);
   const [isCollapsed, setIsCollapsed] = useState(defaultIsCollapsed);
   const [chatItems, setChatItems] = useState([]);
-  const theme = useTheme();
-  const setTheme = useSetTheme();
 
   const routerMap = {
     home: '/',

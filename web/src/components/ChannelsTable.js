@@ -88,21 +88,6 @@ const ChannelsTable = () => {
       dataIndex: 'name'
     },
     {
-      title: '分组',
-      dataIndex: 'group',
-      render: (text, record, index) => {
-        return (
-          <div>
-            <Space spacing={2}>
-              {text?.split(',').map((item, index) => {
-                return renderGroup(item);
-              })}
-            </Space>
-          </div>
-        );
-      }
-    },
-    {
       title: '类型',
       dataIndex: 'type',
       render: (text, record, index) => {
@@ -141,43 +126,6 @@ const ChannelsTable = () => {
       dataIndex: 'response_time',
       render: (text, record, index) => {
         return <div>{renderResponseTime(text)}</div>;
-      }
-    },
-    {
-      title: '已用/剩余',
-      dataIndex: 'expired_time',
-      render: (text, record, index) => {
-        if (record.children === undefined) {
-          return (
-            <div>
-              <Space spacing={1}>
-                <Tooltip content={'已用额度'}>
-                  <Tag color="white" type="ghost" size="large">
-                    {renderQuota(record.used_quota)}
-                  </Tag>
-                </Tooltip>
-                <Tooltip content={'剩余额度' + record.balance + '，点击更新'}>
-                  <Tag
-                    color="white"
-                    type="ghost"
-                    size="large"
-                    onClick={() => {
-                      updateChannelBalance(record);
-                    }}
-                  >
-                    ${renderNumberWithPoint(record.balance)}
-                  </Tag>
-                </Tooltip>
-              </Space>
-            </div>
-          );
-        } else {
-          return <Tooltip content={'已用额度'}>
-            <Tag color="white" type="ghost" size="large">
-              {renderQuota(record.used_quota)}
-            </Tag>
-          </Tooltip>;
-        }
       }
     },
     {
@@ -1008,16 +956,6 @@ const ChannelsTable = () => {
                 setSearchModel(v.trim());
               }}
             />
-            <Form.Select
-              field="group"
-              label="分组"
-              optionList={[{ label: '选择分组', value: null }, ...groupOptions]}
-              initValue={null}
-              onChange={(v) => {
-                setSearchGroup(v);
-                searchChannels(searchKeyword, v, searchModel);
-              }}
-            />
             <Button
               label="查询"
               type="primary"
@@ -1150,22 +1088,6 @@ const ChannelsTable = () => {
               修复数据库一致性
             </Button>
           </Popconfirm>
-        </Space>
-      </div>
-      <div style={{ marginTop: 20 }}>
-      <Space>
-          <Typography.Text strong>标签聚合模式</Typography.Text>
-          <Switch
-            checked={enableTagMode}
-            label="标签聚合模式"
-            uncheckedText="关"
-            aria-label="是否启用标签聚合"
-            onChange={(v) => {
-              setEnableTagMode(v);
-              // 切换模式时重新加载数据
-              loadChannels(0, pageSize, idSort, v);
-            }}
-          />
         </Space>
       </div>
 

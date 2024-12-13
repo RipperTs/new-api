@@ -259,12 +259,12 @@ const Detail = (props) => {
       uniqueTimes.add(timestamp2string1(item.created_at, dataExportDefaultTime));
       totalTokens += item.token_used;
     });
-    
+
     // 处理颜色映射
     const newModelColors = {};
     Array.from(uniqueModels).forEach((modelName) => {
-      newModelColors[modelName] = modelColorMap[modelName] || 
-        modelColors[modelName] || 
+      newModelColors[modelName] = modelColorMap[modelName] ||
+        modelColors[modelName] ||
         modelToColor(modelName);
     });
     setModelColors(newModelColors);
@@ -273,7 +273,7 @@ const Detail = (props) => {
     for (let item of data) {
       totalQuota += item.quota;
       totalTimes += item.count;
-      
+
       let pieItem = newPieData.find((it) => it.type === item.model_name);
       if (pieItem) {
         pieItem.value += item.count;
@@ -292,9 +292,9 @@ const Detail = (props) => {
       const generateTimePoints = () => {
         let lastTime = Math.max(...data.map(item => item.created_at));
         let points = [];
-        let interval = dataExportDefaultTime === 'hour' ? 3600 
-                      : dataExportDefaultTime === 'day' ? 86400 
-                      : 604800;
+        let interval = dataExportDefaultTime === 'hour' ? 3600
+          : dataExportDefaultTime === 'day' ? 86400
+            : 604800;
 
         for (let i = 0; i < 7; i++) {
           points.push(timestamp2string1(lastTime - (i * interval), dataExportDefaultTime));
@@ -308,8 +308,8 @@ const Detail = (props) => {
     // 为每个时间点和模型生成数据
     timePoints.forEach(time => {
       Array.from(uniqueModels).forEach(model => {
-        let existingData = data.find(item => 
-          timestamp2string1(item.created_at, dataExportDefaultTime) === time && 
+        let existingData = data.find(item =>
+          timestamp2string1(item.created_at, dataExportDefaultTime) === time &&
           item.model_name === model
         );
 
@@ -349,7 +349,7 @@ const Detail = (props) => {
         specified: newModelColors
       }
     }));
-    
+
     setPieData(newPieData);
     setLineData(newLineData);
     setConsumeQuota(totalQuota);
@@ -459,13 +459,10 @@ const Detail = (props) => {
               <Col span={styleState.isMobile?24:8}>
                 <Card className='panel-desc-card'>
                   <Descriptions row size="small">
-                    <Descriptions.Item itemKey='当前余额'>
-                      {renderQuota(userState?.user?.quota)}
-                    </Descriptions.Item>
                     <Descriptions.Item itemKey='历史消耗'>
                       {renderQuota(userState?.user?.used_quota)}
                     </Descriptions.Item>
-                    <Descriptions.Item itemKey='请求次数'>
+                    <Descriptions.Item itemKey='总请求次数'>
                       {userState.user?.request_count}
                     </Descriptions.Item>
                   </Descriptions>
@@ -492,13 +489,13 @@ const Detail = (props) => {
                     <Descriptions.Item itemKey='平均RPM'>
                       {(times /
                         ((Date.parse(end_timestamp) -
-                          Date.parse(start_timestamp)) /
+                            Date.parse(start_timestamp)) /
                           60000)).toFixed(3)}
                     </Descriptions.Item>
                     <Descriptions.Item itemKey='平均TPM'>
                       {(consumeTokens /
                         ((Date.parse(end_timestamp) -
-                          Date.parse(start_timestamp)) /
+                            Date.parse(start_timestamp)) /
                           60000)).toFixed(3)}
                     </Descriptions.Item>
                   </Descriptions>

@@ -23,7 +23,6 @@ import {
   Checkbox,
   Banner
 } from '@douyinfe/semi-ui';
-import { Divider } from 'semantic-ui-react';
 import { getChannelModels, loadChannelModels } from '../../components/utils.js';
 import axios from 'axios';
 

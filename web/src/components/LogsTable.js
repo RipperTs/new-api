@@ -248,13 +248,6 @@ const LogsTable = () => {
       },
     },
     {
-      title: '类型',
-      dataIndex: 'type',
-      render: (text, record, index) => {
-        return <>{renderType(text)}</>;
-      },
-    },
-    {
       title: '模型',
       dataIndex: 'model_name',
       render: (text, record, index) => {
@@ -327,17 +320,6 @@ const LogsTable = () => {
       },
     },
     {
-      title: '花费',
-      dataIndex: 'quota',
-      render: (text, record, index) => {
-        return record.type === 0 || record.type === 2 ? (
-          <>{renderQuota(text, 6)}</>
-        ) : (
-          <></>
-        );
-      },
-    },
-    {
       title: '重试',
       dataIndex: 'retry',
       className: isAdmin() ? 'tableShow' : 'tableHiddle',
@@ -401,7 +383,7 @@ const LogsTable = () => {
                 }}
                 style={{ maxWidth: 240 }}
             >
-              调用消费
+              调用详情
             </Paragraph>
         );
       },
@@ -678,9 +660,6 @@ const LogsTable = () => {
         <Header>
           <Spin spinning={loadingStat}>
             <Space>
-              <Tag color='green' size='large' style={{ padding: 15 }}>
-                总消耗额度: {renderQuota(stat.quota)}
-              </Tag>
               <Tag color='blue' size='large' style={{ padding: 15 }}>
                 RPM: {stat.rpm}
               </Tag>
@@ -767,22 +746,6 @@ const LogsTable = () => {
             <Form.Section></Form.Section>
           </>
         </Form>
-        <div style={{marginTop:10}}>
-          <Select
-              defaultValue='0'
-              style={{ width: 120 }}
-              onChange={(value) => {
-                setLogType(parseInt(value));
-                loadLogs(0, pageSize, parseInt(value));
-              }}
-          >
-            <Select.Option value='0'>全部</Select.Option>
-            <Select.Option value='1'>充值</Select.Option>
-            <Select.Option value='2'>消费</Select.Option>
-            <Select.Option value='3'>管理</Select.Option>
-            <Select.Option value='4'>系统</Select.Option>
-          </Select>
-        </div>
         <Table
           style={{ marginTop: 5 }}
           columns={columns}

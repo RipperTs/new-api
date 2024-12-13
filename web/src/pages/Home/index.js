@@ -172,7 +172,7 @@ const Home = () => {
             />
           ) : (
             <div
-              style={{ fontSize: 'larger' }}
+              style={{ fontSize: 'larger', padding: '20px' }}
               dangerouslySetInnerHTML={{ __html: homePageContent }}
             ></div>
           )}

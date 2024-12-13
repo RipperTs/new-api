@@ -96,32 +96,6 @@ const TokensTable = () => {
       },
     },
     {
-      title: '已用额度',
-      dataIndex: 'used_quota',
-      render: (text, record, index) => {
-        return <div>{renderQuota(parseInt(text))}</div>;
-      },
-    },
-    {
-      title: '剩余额度',
-      dataIndex: 'remain_quota',
-      render: (text, record, index) => {
-        return (
-          <div>
-            {record.unlimited_quota ? (
-              <Tag size={'large'} color={'white'}>
-                无限制
-              </Tag>
-            ) : (
-              <Tag size={'large'} color={'light-blue'}>
-                {renderQuota(parseInt(text))}
-              </Tag>
-            )}
-          </div>
-        );
-      },
-    },
-    {
       title: '创建时间',
       dataIndex: 'created_time',
       render: (text, record, index) => {

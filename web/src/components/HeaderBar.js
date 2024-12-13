@@ -66,12 +66,7 @@ const HeaderBar = () => {
       text: '控制台',
       itemKey: 'detail',
       to: '/',
-    },
-    {
-      text: '定价',
-      itemKey: 'pricing',
-      to: '/pricing',
-    },
+    }
   ];
 
   async function logout() {
