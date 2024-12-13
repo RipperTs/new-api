@@ -413,33 +413,6 @@ const PersonalSetting = () => {
                 </div>
               </div>
               <div style={{marginTop: 10}}>
-                <Typography.Text strong>微信</Typography.Text>
-                <div
-                  style={{display: 'flex', justifyContent: 'space-between'}}
-                >
-                  <div>
-                    <Input
-                      value={
-                        userState.user && userState.user.wechat_id !== ''
-                          ? '已绑定'
-                          : '未绑定'
-                      }
-                      readonly={true}
-                    ></Input>
-                  </div>
-                  <div>
-                    <Button
-                      disabled={
-                        (userState.user && userState.user.wechat_id !== '') ||
-                        !status.wechat_login
-                      }
-                    >
-                      {status.wechat_login ? '绑定' : '未启用'}
-                    </Button>
-                  </div>
-                </div>
-              </div>
-              <div style={{marginTop: 10}}>
                 <Typography.Text strong>GitHub</Typography.Text>
                 <div
                   style={{display: 'flex', justifyContent: 'space-between'}}
@@ -465,67 +438,6 @@ const PersonalSetting = () => {
                       }
                     >
                       {status.github_oauth ? '绑定' : '未启用'}
-                    </Button>
-                  </div>
-                </div>
-              </div>
-              <div style={{marginTop: 10}}>
-                <Typography.Text strong>Telegram</Typography.Text>
-                <div
-                  style={{display: 'flex', justifyContent: 'space-between'}}
-                >
-                  <div>
-                    <Input
-                      value={
-                        userState.user && userState.user.telegram_id !== ''
-                          ? userState.user.telegram_id
-                          : '未绑定'
-                      }
-                      readonly={true}
-                    ></Input>
-                  </div>
-                  <div>
-                    {status.telegram_oauth ? (
-                      userState.user.telegram_id !== '' ? (
-                        <Button disabled={true}>已绑定</Button>
-                      ) : (
-                        <TelegramLoginButton
-                          dataAuthUrl='/api/oauth/telegram/bind'
-                          botName={status.telegram_bot_name}
-                        />
-                      )
-                    ) : (
-                      <Button disabled={true}>未启用</Button>
-                    )}
-                  </div>
-                </div>
-              </div>
-              <div style={{marginTop: 10}}>
-                <Typography.Text strong>LinuxDO</Typography.Text>
-                <div
-                  style={{display: 'flex', justifyContent: 'space-between'}}
-                >
-                  <div>
-                    <Input
-                      value={
-                        userState.user && userState.user.linux_do_id !== ''
-                          ? userState.user.linux_do_id
-                          : '未绑定'
-                      }
-                      readonly={true}
-                    ></Input>
-                  </div>
-                  <div>
-                    <Button
-                      onClick={() => {
-                        onLinuxDOOAuthClicked(status.linuxdo_client_id);
-                      }}
-                      disabled={
-                        (userState.user && userState.user.linux_do_id !== '') ||
-                        !status.linuxdo_oauth
-                      }
-                    >
-                      {status.linuxdo_oauth ? '绑定' : '未启用'}
                     </Button>
                   </div>
                 </div>
