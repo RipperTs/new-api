@@ -20,7 +20,7 @@ COPY . .
 COPY --from=builder /build/dist ./web/dist
 RUN go build -ldflags "-s -w -X 'one-api/common.Version=$(cat VERSION)' -extldflags '-static'" -o one-api
 
-FROM alpine
+FROM alpine:3.18
 
 RUN apk update \
     && apk upgrade \
