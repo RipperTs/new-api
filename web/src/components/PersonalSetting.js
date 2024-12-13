@@ -364,13 +364,6 @@ const PersonalSetting = () => {
                   </Space>
                 </>
               }
-              footer={
-                <Descriptions row>
-                  <Descriptions.Item itemKey='累计请求次数'>
-                    {userState.user?.request_count}
-                  </Descriptions.Item>
-                </Descriptions>
-              }
             >
               <Typography.Title heading={6}>可用模型</Typography.Title>
               <div style={{marginTop: 10}}>
