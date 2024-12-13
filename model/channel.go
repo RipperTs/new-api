@@ -100,9 +100,13 @@ func GetAllChannels(startIdx int, num int, selectAll bool, idSort bool) ([]*Chan
 	return channels, err
 }
 
-func GetChannelsByTag(tag string) ([]*Channel, error) {
+func GetChannelsByTag(tag string, idSort bool) ([]*Channel, error) {
 	var channels []*Channel
-	err := DB.Where("tag = ?", tag).Find(&channels).Error
+	order := "priority desc"
+	if idSort {
+		order = "id desc"
+	}
+	err := DB.Where("tag = ?", tag).Order(order).Find(&channels).Error
 	return channels, err
 }
 
@@ -362,7 +366,7 @@ func EditChannelByTag(tag string, newTag *string, modelMapping *string, models *
 		return err
 	}
 	if shouldReCreateAbilities {
-		channels, err := GetChannelsByTag(updatedTag)
+		channels, err := GetChannelsByTag(updatedTag, false)
 		if err == nil {
 			for _, channel := range channels {
 				err = channel.UpdateAbilities()
@@ -409,4 +413,59 @@ func GetPaginatedTags(offset int, limit int) ([]*string, error) {
 	var tags []*string
 	err := DB.Model(&Channel{}).Select("DISTINCT tag").Where("tag != ''").Offset(offset).Limit(limit).Find(&tags).Error
 	return tags, err
+}
+
+func SearchTags(keyword string, group string, model string, idSort bool) ([]*string, error) {
+	var tags []*string
+	keyCol := "`key`"
+	groupCol := "`group`"
+	modelsCol := "`models`"
+
+	// 如果是 PostgreSQL，使用双引号
+	if common.UsingPostgreSQL {
+		keyCol = `"key"`
+		groupCol = `"group"`
+		modelsCol = `"models"`
+	}
+
+	order := "priority desc"
+	if idSort {
+		order = "id desc"
+	}
+
+	// 构造基础查询
+	baseQuery := DB.Model(&Channel{}).Omit(keyCol)
+
+	// 构造WHERE子句
+	var whereClause string
+	var args []interface{}
+	if group != "" && group != "null" {
+		var groupCondition string
+		if common.UsingMySQL {
+			groupCondition = `CONCAT(',', ` + groupCol + `, ',') LIKE ?`
+		} else {
+			// sqlite, PostgreSQL
+			groupCondition = `(',' || ` + groupCol + ` || ',') LIKE ?`
+		}
+		whereClause = "(id = ? OR name LIKE ? OR " + keyCol + " = ?) AND " + modelsCol + ` LIKE ? AND ` + groupCondition
+		args = append(args, common.String2Int(keyword), "%"+keyword+"%", keyword, "%"+model+"%", "%,"+group+",%")
+	} else {
+		whereClause = "(id = ? OR name LIKE ? OR " + keyCol + " = ?) AND " + modelsCol + " LIKE ?"
+		args = append(args, common.String2Int(keyword), "%"+keyword+"%", keyword, "%"+model+"%")
+	}
+
+	subQuery := baseQuery.Where(whereClause, args...).
+		Select("tag").
+		Where("tag != ''").
+		Order(order)
+
+	err := DB.Table("(?) as sub", subQuery).
+		Select("DISTINCT tag").
+		Find(&tags).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return tags, nil
 }

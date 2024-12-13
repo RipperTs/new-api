@@ -88,6 +88,21 @@ const ChannelsTable = () => {
       dataIndex: 'name'
     },
     {
+      title: '分组',
+      dataIndex: 'group',
+      render: (text, record, index) => {
+        return (
+          <div>
+            <Space spacing={2}>
+              {text?.split(',').map((item, index) => {
+                return renderGroup(item);
+              })}
+            </Space>
+          </div>
+        );
+      }
+    },
+    {
       title: '类型',
       dataIndex: 'type',
       render: (text, record, index) => {
@@ -126,6 +141,43 @@ const ChannelsTable = () => {
       dataIndex: 'response_time',
       render: (text, record, index) => {
         return <div>{renderResponseTime(text)}</div>;
+      }
+    },
+    {
+      title: '已用/剩余',
+      dataIndex: 'expired_time',
+      render: (text, record, index) => {
+        if (record.children === undefined) {
+          return (
+            <div>
+              <Space spacing={1}>
+                <Tooltip content={'已用额度'}>
+                  <Tag color="white" type="ghost" size="large">
+                    {renderQuota(record.used_quota)}
+                  </Tag>
+                </Tooltip>
+                <Tooltip content={'剩余额度' + record.balance + '，点击更新'}>
+                  <Tag
+                    color="white"
+                    type="ghost"
+                    size="large"
+                    onClick={() => {
+                      updateChannelBalance(record);
+                    }}
+                  >
+                    ${renderNumberWithPoint(record.balance)}
+                  </Tag>
+                </Tooltip>
+              </Space>
+            </div>
+          );
+        } else {
+          return <Tooltip content={'已用额度'}>
+            <Tag color="white" type="ghost" size="large">
+              {renderQuota(record.used_quota)}
+            </Tag>
+          </Tooltip>;
+        }
       }
     },
     {
@@ -432,7 +484,7 @@ const ChannelsTable = () => {
       if (!enableTagMode) {
         channelDates.push(channels[i]);
       } else {
-        let tag = channels[i].tag;
+        let tag = channels[i].tag?channels[i].tag:"";
         // find from channelTags
         let tagIndex = channelTags[tag];
         let tagChannelDates = undefined;
@@ -716,7 +768,7 @@ const ChannelsTable = () => {
     }
   };
 
-  const searchChannels = async (searchKeyword, searchGroup, searchModel) => {
+  const searchChannels = async (searchKeyword, searchGroup, searchModel, enableTagMode) => {
     if (searchKeyword === '' && searchGroup === '' && searchModel === '') {
       await loadChannels(0, pageSize, idSort, enableTagMode);
       setActivePage(1);
@@ -930,7 +982,7 @@ const ChannelsTable = () => {
       />
       <Form
         onSubmit={() => {
-          searchChannels(searchKeyword, searchGroup, searchModel);
+          searchChannels(searchKeyword, searchGroup, searchModel, enableTagMode);
         }}
         labelPosition="left"
       >
@@ -954,6 +1006,16 @@ const ChannelsTable = () => {
               loading={searching}
               onChange={(v) => {
                 setSearchModel(v.trim());
+              }}
+            />
+            <Form.Select
+              field="group"
+              label="分组"
+              optionList={[{ label: '选择分组', value: null }, ...groupOptions]}
+              initValue={null}
+              onChange={(v) => {
+                setSearchGroup(v);
+                searchChannels(searchKeyword, v, searchModel);
               }}
             />
             <Button
@@ -1020,6 +1082,15 @@ const ChannelsTable = () => {
             </Button>
           </Popconfirm>
           <Popconfirm
+            title="确定？"
+            okType={'secondary'}
+            onConfirm={updateAllChannelsBalance}
+          >
+            <Button theme="light" type="secondary" style={{ marginRight: 8 }}>
+              更新所有已启用通道余额
+            </Button>
+          </Popconfirm>
+          <Popconfirm
             title="确定是否要删除禁用通道？"
             content="此修改将不可逆"
             okType={'danger'}
@@ -1082,6 +1153,20 @@ const ChannelsTable = () => {
         </Space>
       </div>
       <div style={{ marginTop: 20 }}>
+      <Space>
+          <Typography.Text strong>标签聚合模式</Typography.Text>
+          <Switch
+            checked={enableTagMode}
+            label="标签聚合模式"
+            uncheckedText="关"
+            aria-label="是否启用标签聚合"
+            onChange={(v) => {
+              setEnableTagMode(v);
+              // 切换模式时重新加载数据
+              loadChannels(0, pageSize, idSort, v);
+            }}
+          />
+        </Space>
       </div>
 
 
