@@ -1,11 +1,16 @@
-FROM oven/bun:latest as builder
+FROM node:18-slim as builder
+
+# 安装 pnpm
+RUN npm install -g pnpm@latest
 
 WORKDIR /build
 COPY web/package.json .
-RUN bun install
+# 如果有 pnpm-lock.yaml，也需要复制
+COPY web/pnpm-lock.yaml* .
+RUN pnpm install
 COPY ./web .
 COPY ./VERSION .
-RUN DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION=$(cat VERSION) bun run build
+RUN DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION=$(cat VERSION) pnpm run build
 
 FROM golang AS builder2
 
