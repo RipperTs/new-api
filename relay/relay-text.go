@@ -22,6 +22,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// getAndValidateTextRequest 获取并验证文本请求
 func getAndValidateTextRequest(c *gin.Context, relayInfo *relaycommon.RelayInfo) (*dto.GeneralOpenAIRequest, error) {
 	textRequest := &dto.GeneralOpenAIRequest{}
 	err := common.UnmarshalBodyReusable(c, textRequest)
