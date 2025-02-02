@@ -5,10 +5,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/bytedance/gopkg/util/gopool"
-	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
+	"github.com/pkg/errors"
 	"io"
+	"math"
+	"mime/multipart"
 	"net/http"
 	"one-api/common"
 	"one-api/constant"
@@ -16,12 +16,37 @@ import (
 	relaycommon "one-api/relay/common"
 	relayconstant "one-api/relay/constant"
 	"one-api/service"
+	"os"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/bytedance/gopkg/util/gopool"
+	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 )
 
+func sendStreamData(c *gin.Context, data string, forceFormat bool) error {
+	if data == "" {
+		return nil
+	}
+
+	if forceFormat {
+		var lastStreamResponse dto.ChatCompletionsStreamResponse
+		if err := json.Unmarshal(common.StringToByteSlice(data), &lastStreamResponse); err != nil {
+			return err
+		}
+		return service.ObjectData(c, lastStreamResponse)
+	}
+	return service.StringData(c, data)
+}
+
 func OaiStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*dto.OpenAIErrorWithStatusCode, *dto.Usage) {
+	if resp == nil || resp.Body == nil {
+		common.LogError(c, "invalid response or response body")
+		return service.OpenAIErrorWrapper(fmt.Errorf("invalid response"), "invalid_response", http.StatusInternalServerError), nil
+	}
+
 	containStreamUsage := false
 	var responseId string
 	var createAt int64 = 0
@@ -31,14 +56,25 @@ func OaiStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rel
 	var responseTextBuilder strings.Builder
 	var usage = &dto.Usage{}
 	var streamItems []string // store stream items
+	var forceFormat bool
+
+	if info.ChannelType == common.ChannelTypeCustom {
+		if forceFmt, ok := info.ChannelSetting["force_format"].(bool); ok {
+			forceFormat = forceFmt
+		}
+	}
 
 	toolCount := 0
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Split(bufio.ScanLines)
 
 	service.SetEventStreamHeaders(c)
-
-	ticker := time.NewTicker(time.Duration(constant.StreamingTimeout) * time.Second)
+	streamingTimeout := time.Duration(constant.StreamingTimeout) * time.Second
+	if strings.HasPrefix(info.UpstreamModelName, "o1") || strings.HasPrefix(info.UpstreamModelName, "o3") {
+		// twice timeout for o1 model
+		streamingTimeout *= 2
+	}
+	ticker := time.NewTicker(streamingTimeout)
 	defer ticker.Stop()
 
 	stopChan := make(chan bool)
@@ -62,7 +98,7 @@ func OaiStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rel
 			data = data[6:]
 			if !strings.HasPrefix(data, "[DONE]") {
 				if lastStreamData != "" {
-					err := service.StringData(c, lastStreamData)
+					err := sendStreamData(c, lastStreamData, forceFormat)
 					if err != nil {
 						common.LogError(c, "streaming error: "+err.Error())
 					}
@@ -105,7 +141,7 @@ func OaiStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rel
 		}
 	}
 	if shouldSendLastResp {
-		service.StringData(c, lastStreamData)
+		sendStreamData(c, lastStreamData, forceFormat)
 	}
 
 	// 计算token
@@ -284,6 +320,11 @@ func OpenaiTTSHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rel
 }
 
 func OpenaiSTTHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo, responseFormat string) (*dto.OpenAIErrorWithStatusCode, *dto.Usage) {
+	// count tokens by audio file duration
+	audioTokens, err := countAudioTokens(c)
+	if err != nil {
+		return service.OpenAIErrorWrapper(err, "count_audio_tokens_failed", http.StatusInternalServerError), nil
+	}
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return service.OpenAIErrorWrapper(err, "read_response_body_failed", http.StatusInternalServerError), nil
@@ -308,73 +349,59 @@ func OpenaiSTTHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rel
 	}
 	resp.Body.Close()
 
-	var text string
-	switch responseFormat {
-	case "json":
-		text, err = getTextFromJSON(responseBody)
-	case "text":
-		text, err = getTextFromText(responseBody)
-	case "srt":
-		text, err = getTextFromSRT(responseBody)
-	case "verbose_json":
-		text, err = getTextFromVerboseJSON(responseBody)
-	case "vtt":
-		text, err = getTextFromVTT(responseBody)
-	}
-
 	usage := &dto.Usage{}
-	usage.PromptTokens = info.PromptTokens
-	usage.CompletionTokens, _ = service.CountTextToken(text, info.UpstreamModelName)
+	usage.PromptTokens = audioTokens
+	usage.CompletionTokens = 0
 	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 	return nil, usage
 }
 
-func getTextFromVTT(body []byte) (string, error) {
-	return getTextFromSRT(body)
-}
-
-func getTextFromVerboseJSON(body []byte) (string, error) {
-	var whisperResponse dto.WhisperVerboseJSONResponse
-	if err := json.Unmarshal(body, &whisperResponse); err != nil {
-		return "", fmt.Errorf("unmarshal_response_body_failed err :%w", err)
+func countAudioTokens(c *gin.Context) (int, error) {
+	body, err := common.GetRequestBody(c)
+	if err != nil {
+		return 0, errors.WithStack(err)
 	}
-	return whisperResponse.Text, nil
-}
 
-func getTextFromSRT(body []byte) (string, error) {
-	scanner := bufio.NewScanner(strings.NewReader(string(body)))
-	var builder strings.Builder
-	var textLine bool
-	for scanner.Scan() {
-		line := scanner.Text()
-		if textLine {
-			builder.WriteString(line)
-			textLine = false
-			continue
-		} else if strings.Contains(line, "-->") {
-			textLine = true
-			continue
-		}
+	var reqBody struct {
+		File *multipart.FileHeader `form:"file" binding:"required"`
 	}
-	if err := scanner.Err(); err != nil {
-		return "", err
+	c.Request.Body = io.NopCloser(bytes.NewReader(body))
+	if err = c.ShouldBind(&reqBody); err != nil {
+		return 0, errors.WithStack(err)
 	}
-	return builder.String(), nil
-}
 
-func getTextFromText(body []byte) (string, error) {
-	return strings.TrimSuffix(string(body), "\n"), nil
-}
-
-func getTextFromJSON(body []byte) (string, error) {
-	var whisperResponse dto.AudioResponse
-	if err := json.Unmarshal(body, &whisperResponse); err != nil {
-		return "", fmt.Errorf("unmarshal_response_body_failed err :%w", err)
+	reqFp, err := reqBody.File.Open()
+	if err != nil {
+		return 0, errors.WithStack(err)
 	}
-	return whisperResponse.Text, nil
+
+	tmpFp, err := os.CreateTemp("", "audio-*")
+	if err != nil {
+		return 0, errors.WithStack(err)
+	}
+	defer os.Remove(tmpFp.Name())
+
+	_, err = io.Copy(tmpFp, reqFp)
+	if err != nil {
+		return 0, errors.WithStack(err)
+	}
+	if err = tmpFp.Close(); err != nil {
+		return 0, errors.WithStack(err)
+	}
+
+	duration, err := common.GetAudioDuration(c.Request.Context(), tmpFp.Name())
+	if err != nil {
+		return 0, errors.WithStack(err)
+	}
+
+	return int(math.Round(math.Ceil(duration) / 60.0 * 1000)), nil // 1 minute 相当于 1k tokens
 }
 
 func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*dto.OpenAIErrorWithStatusCode, *dto.RealtimeUsage) {
+	if info == nil || info.ClientWs == nil || info.TargetWs == nil {
+		return service.OpenAIErrorWrapper(fmt.Errorf("invalid websocket connection"), "invalid_connection", http.StatusBadRequest), nil
+	}
+
 	info.IsStream = true
 	clientConn := info.ClientWs
 	targetConn := info.TargetWs
@@ -390,6 +417,11 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*dto.Op
 	sumUsage := &dto.RealtimeUsage{}
 
 	gopool.Go(func() {
+		defer func() {
+			if r := recover(); r != nil {
+				errChan <- fmt.Errorf("panic in client reader: %v", r)
+			}
+		}()
 		for {
 			select {
 			case <-c.Done():
@@ -445,6 +477,11 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*dto.Op
 	})
 
 	gopool.Go(func() {
+		defer func() {
+			if r := recover(); r != nil {
+				errChan <- fmt.Errorf("panic in target reader: %v", r)
+			}
+		}()
 		for {
 			select {
 			case <-c.Done():
@@ -568,6 +605,10 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*dto.Op
 }
 
 func preConsumeUsage(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.RealtimeUsage, totalUsage *dto.RealtimeUsage) error {
+	if usage == nil || totalUsage == nil {
+		return fmt.Errorf("invalid usage pointer")
+	}
+
 	totalUsage.TotalTokens += usage.TotalTokens
 	totalUsage.InputTokens += usage.InputTokens
 	totalUsage.OutputTokens += usage.OutputTokens
