@@ -9,5 +9,4 @@ docs
 nginx
 out
 /web/node_modules
-/web/dist
 
