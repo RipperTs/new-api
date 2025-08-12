@@ -1,15 +1,14 @@
-FROM node:18-alpine AS builder
+FROM node:18.18-alpine AS builder
 
 WORKDIR /build
-RUN npm install -g pnpm
+RUN apk add --no-cache python3 make g++ && npm install -g pnpm
 COPY web/package.json .
-COPY web/pnpm-lock.yaml .
-RUN pnpm install
+RUN pnpm install --ignore-scripts
 COPY ./web .
 COPY ./VERSION .
 RUN DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION=$(cat VERSION) pnpm run build
 
-FROM golang:alpine AS builder2
+FROM golang:1.21-alpine AS builder2
 
 ENV GO111MODULE=on \
     CGO_ENABLED=0 \
@@ -24,7 +23,7 @@ COPY . .
 COPY --from=builder /build/dist ./web/dist
 RUN go build -ldflags "-s -w -X 'one-api/common.Version=$(cat VERSION)'" -o one-api
 
-FROM alpine
+FROM alpine:latest
 
 RUN apk upgrade --no-cache \
     && apk add --no-cache ca-certificates tzdata ffmpeg \
