@@ -36,6 +36,7 @@ type RelayInfo struct {
 	ApiKey               string
 	Organization         string
 	BaseUrl              string
+	ProxyURL             string
 	SupportStreamOptions bool
 	ShouldIncludeUsage   bool
 	ClientWs             *websocket.Conn
@@ -76,6 +77,7 @@ func GenRelayInfo(c *gin.Context) *RelayInfo {
 	info := &RelayInfo{
 		RelayMode:         relayconstant.Path2RelayMode(c.Request.URL.Path),
 		BaseUrl:           c.GetString("base_url"),
+		ProxyURL:          c.GetString("proxy_url"),
 		RequestURLPath:    c.Request.URL.String(),
 		ChannelType:       channelType,
 		ChannelId:         channelId,

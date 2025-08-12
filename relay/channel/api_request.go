@@ -7,6 +7,7 @@ import (
 	"github.com/gorilla/websocket"
 	"io"
 	"net/http"
+	"net/url"
 	"one-api/relay/common"
 	"one-api/relay/constant"
 	"one-api/service"
@@ -39,7 +40,7 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 	if err != nil {
 		return nil, fmt.Errorf("setup request header failed: %w", err)
 	}
-	resp, err := doRequest(c, req)
+	resp, err := doRequest(c, req, info)
 	if err != nil {
 		return nil, fmt.Errorf("do request failed: %w", err)
 	}
@@ -62,7 +63,7 @@ func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBod
 	if err != nil {
 		return nil, fmt.Errorf("setup request header failed: %w", err)
 	}
-	resp, err := doRequest(c, req)
+	resp, err := doRequest(c, req, info)
 	if err != nil {
 		return nil, fmt.Errorf("do request failed: %w", err)
 	}
@@ -80,7 +81,18 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 		return nil, fmt.Errorf("setup request header failed: %w", err)
 	}
 	targetHeader.Set("Content-Type", c.Request.Header.Get("Content-Type"))
-	targetConn, _, err := websocket.DefaultDialer.Dial(fullRequestURL, targetHeader)
+
+	dialer := websocket.DefaultDialer
+	if info != nil && info.ProxyURL != "" {
+		proxyURLParsed, err := url.Parse(info.ProxyURL)
+		if err == nil {
+			dialer = &websocket.Dialer{
+				Proxy: http.ProxyURL(proxyURLParsed),
+			}
+		}
+	}
+
+	targetConn, _, err := dialer.Dial(fullRequestURL, targetHeader)
 	if err != nil {
 		return nil, fmt.Errorf("dial failed to %s: %w", fullRequestURL, err)
 	}
@@ -90,8 +102,31 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 	return targetConn, nil
 }
 
-func doRequest(c *gin.Context, req *http.Request) (*http.Response, error) {
-	resp, err := service.GetHttpClient().Do(req)
+func doRequest(c *gin.Context, req *http.Request, info interface{}) (*http.Response, error) {
+	var client *http.Client
+	var proxyURL string
+
+	switch v := info.(type) {
+	case *common.RelayInfo:
+		if v != nil {
+			proxyURL = v.ProxyURL
+		}
+	case *common.TaskRelayInfo:
+		// TaskRelayInfo 暂时不支持代理，使用默认客户端
+		client = service.GetHttpClient()
+	default:
+		client = service.GetHttpClient()
+	}
+
+	if client == nil {
+		if proxyURL != "" {
+			client = service.GetHttpClientWithProxy(proxyURL)
+		} else {
+			client = service.GetHttpClient()
+		}
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +155,7 @@ func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.TaskRelayInfo,
 	if err != nil {
 		return nil, fmt.Errorf("setup request header failed: %w", err)
 	}
-	resp, err := doRequest(c, req)
+	resp, err := doRequest(c, req, info)
 	if err != nil {
 		return nil, fmt.Errorf("do request failed: %w", err)
 	}

@@ -76,6 +76,7 @@ func testChannel(channel *model.Channel, testModel string) (err error, openAIErr
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Set("channel", channel.Type)
 	c.Set("base_url", channel.GetBaseURL())
+	c.Set("proxy_url", channel.GetProxyURL())
 
 	middleware.SetupContextForSelectedChannel(c, channel, testModel)
 

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"one-api/common"
 	"one-api/model"
+	"one-api/service"
 	"strconv"
 	"strings"
 
@@ -509,9 +510,10 @@ func UpdateChannel(c *gin.Context) {
 
 func FetchModels(c *gin.Context) {
 	var req struct {
-		BaseURL string `json:"base_url"`
-		Type    int    `json:"type"`
-		Key     string `json:"key"`
+		BaseURL  string `json:"base_url"`
+		Type     int    `json:"type"`
+		Key      string `json:"key"`
+		ProxyURL string `json:"proxy_url"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -527,7 +529,10 @@ func FetchModels(c *gin.Context) {
 		baseURL = common.ChannelBaseURLs[req.Type]
 	}
 
-	client := &http.Client{}
+	client := service.GetHttpClient()
+	if req.ProxyURL != "" {
+		client = service.GetHttpClientWithProxy(req.ProxyURL)
+	}
 	url := fmt.Sprintf("%s/v1/models", baseURL)
 
 	request, err := http.NewRequest("GET", url, nil)

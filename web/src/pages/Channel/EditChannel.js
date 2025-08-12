@@ -85,7 +85,8 @@ const EditChannel = (props) => {
     groups: ['default'],
     priority: 0,
     weight: 0,
-    tag: ''
+    tag: '',
+    proxy_url: ''
   };
   const [batch, setBatch] = useState(false);
   const [autoBan, setAutoBan] = useState(true);
@@ -218,7 +219,8 @@ const EditChannel = (props) => {
           const res = await API.post('/api/channel/fetch_models', {
             base_url: inputs['base_url'],
             type: inputs['type'],
-            key: inputs['key']
+            key: inputs['key'],
+            proxy_url: inputs['proxy_url']
           });
           
           if (res.data && res.data.success) {
@@ -963,6 +965,21 @@ const EditChannel = (props) => {
               }
             }}
             value={inputs.weight}
+            autoComplete="new-password"
+          />
+          <div style={{ marginTop: 10 }}>
+            <Typography.Text strong>
+              {t('代理URL')}
+            </Typography.Text>
+          </div>
+          <Input
+            label={t('代理URL')}
+            name="proxy_url"
+            placeholder={t('此项可选，用于设置HTTP代理，格式如：socks5://user:pass@host:port 或 http://proxy.example.com:8080')}
+            onChange={(value) => {
+              handleInputChange('proxy_url', value);
+            }}
+            value={inputs.proxy_url}
             autoComplete="new-password"
           />
           {inputs.type === 8 && (
