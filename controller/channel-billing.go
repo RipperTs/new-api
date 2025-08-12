@@ -123,7 +123,14 @@ func GetResponseBody(method, url string, channel *model.Channel, headers http.He
 	for k := range headers {
 		req.Header.Add(k, headers.Get(k))
 	}
-	res, err := service.GetHttpClient().Do(req)
+
+	// 使用渠道的代理配置
+	client := service.GetHttpClient()
+	if channel != nil && channel.GetProxyURL() != "" {
+		client = service.GetHttpClientWithProxy(channel.GetProxyURL())
+	}
+
+	res, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}

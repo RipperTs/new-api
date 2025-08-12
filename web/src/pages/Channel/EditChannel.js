@@ -405,7 +405,7 @@ const EditChannel = (props) => {
           <Title level={3}>{isEdit ? t('更新渠道信息') : t('创建新的渠道')}</Title>
         }
         headerStyle={{ borderBottom: '1px solid var(--semi-color-border)' }}
-        bodyStyle={{ borderBottom: '1px solid var(--semi-color-border)' }}
+        bodyStyle={{ borderBottom: '1px solid var(--semi-color-border)', paddingBottom: '20px' }}
         visible={props.visible}
         footer={
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
