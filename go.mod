@@ -1,7 +1,7 @@
 module one-api
 
 // +heroku goVersion go1.18
-go 1.23.4
+go 1.23
 
 require (
 	github.com/Calcium-Ion/go-epay v0.0.4

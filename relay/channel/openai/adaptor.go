@@ -109,19 +109,31 @@ func (a *Adaptor) ConvertRequest(c *gin.Context, info *relaycommon.RelayInfo, re
 	if info.ChannelType != common.ChannelTypeOpenAI && info.ChannelType != common.ChannelTypeAzure {
 		request.StreamOptions = nil
 	}
-	if strings.HasPrefix(request.Model, "o1") || strings.HasPrefix(request.Model, "o3") {
+	if strings.HasPrefix(request.Model, "o") || strings.HasPrefix(request.Model, "gpt-5") {
 		if request.MaxCompletionTokens == 0 && request.MaxTokens != 0 {
 			request.MaxCompletionTokens = request.MaxTokens
 			request.MaxTokens = 0
 		}
-		if strings.HasPrefix(request.Model, "o3") {
-			request.Temperature = nil
+		request.Temperature = nil
+		if strings.HasSuffix(request.Model, "-high") {
+			request.ReasoningEffort = "high"
+			request.Model = strings.TrimSuffix(request.Model, "-high")
+		} else if strings.HasSuffix(request.Model, "-low") {
+			request.ReasoningEffort = "low"
+			request.Model = strings.TrimSuffix(request.Model, "-low")
+		} else if strings.HasSuffix(request.Model, "-medium") {
+			request.ReasoningEffort = "medium"
+			request.Model = strings.TrimSuffix(request.Model, "-medium")
 		}
-	}
-	if request.Model == "o1" || request.Model == "o1-2024-12-17" || strings.HasPrefix(request.Model, "o3") {
-		//修改第一个Message的内容，将system改为developer
-		if len(request.Messages) > 0 && request.Messages[0].Role == "system" {
-			request.Messages[0].Role = "developer"
+		info.ReasoningEffort = request.ReasoningEffort
+		info.UpstreamModelName = request.Model
+
+		// o系列模型developer适配（o1-mini除外）
+		if !strings.HasPrefix(request.Model, "o1-mini") && !strings.HasPrefix(request.Model, "o1-preview") {
+			//修改第一个Message的内容，将system改为developer
+			if len(request.Messages) > 0 && request.Messages[0].Role == "system" {
+				request.Messages[0].Role = "developer"
+			}
 		}
 	}
 
