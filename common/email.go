@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/smtp"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -18,6 +19,28 @@ func generateMessageID() (string, error) {
 	}
 	domain := strings.Split(SMTPFrom, "@")[1]
 	return fmt.Sprintf("<%d.%s@%s>", time.Now().UnixNano(), GetRandomString(12), domain), nil
+}
+
+// normalizeContentForCache 标准化内容用于缓存，移除动态变化的ID信息
+func normalizeContentForCache(content string) string {
+	// 移除常见的动态ID模式
+	patterns := []string{
+		`ID:\s*[a-zA-Z0-9-]+`,                                          // ID: xxx
+		`id:\s*[a-zA-Z0-9-]+`,                                          // id: xxx
+		`请求ID[：:]\s*[a-zA-Z0-9-]+`,                                     // 请求ID: xxx
+		`request[_\s]*id[：:]\s*[a-zA-Z0-9-]+`,                          // request_id: xxx
+		`[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}`, // UUID格式
+		`[a-f0-9]{32}`,                                                 // 32位MD5/哈希
+		`[a-zA-Z0-9]{20,}`,                                             // 长字符串ID（20+字符）
+	}
+
+	normalized := content
+	for _, pattern := range patterns {
+		re := regexp.MustCompile(`(?i)` + pattern)
+		normalized = re.ReplaceAllString(normalized, "[ID]")
+	}
+
+	return normalized
 }
 
 func SendEmail(subject string, receiver string, content string) error {
@@ -40,12 +63,14 @@ func SendEmail(subject string, receiver string, content string) error {
 		"Content-Type: text/html; charset=UTF-8\r\n\r\n%s\r\n",
 		receiver, SystemName, SMTPFrom, encodedSubject, time.Now().Format(time.RFC1123Z), id, content))
 
-	// 只取前 36 个字符生成 MD5 缓存, 避免有request id的影响导致无法命中缓存
-	contentLen := len(content)
-	if contentLen > 36 {
-		contentLen = 36
+	// 标准化内容并生成 MD5 缓存键，移除动态ID避免缓存失效
+	normalizedContent := normalizeContentForCache(content)
+	// 使用标准化后的内容前100个字符生成哈希
+	contentLen := len(normalizedContent)
+	if contentLen > 100 {
+		contentLen = 100
 	}
-	truncatedContent := content[:contentLen]
+	truncatedContent := normalizedContent[:contentLen]
 	hash := md5.Sum([]byte(truncatedContent))
 	cacheMD5Key := "email_cache:" + hex.EncodeToString(hash[:])
 	redisValue, _ := RedisGet(cacheMD5Key)
