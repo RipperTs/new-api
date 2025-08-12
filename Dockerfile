@@ -3,7 +3,8 @@ FROM node:18.18-alpine AS builder
 WORKDIR /build
 RUN apk add --no-cache python3 make g++ && npm install -g pnpm
 COPY web/package.json .
-RUN pnpm install --ignore-scripts
+COPY web/pnpm-lock.yaml .
+RUN pnpm install --frozen-lockfile --ignore-scripts
 COPY ./web .
 COPY ./VERSION .
 RUN DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION=$(cat VERSION) pnpm run build
