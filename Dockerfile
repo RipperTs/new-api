@@ -8,7 +8,7 @@ COPY ./web .
 COPY ./VERSION .
 RUN DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION=$(cat VERSION) pnpm run build
 
-FROM golang:1.21-alpine AS builder2
+FROM golang:1.23-alpine AS builder2
 
 ENV GO111MODULE=on \
     CGO_ENABLED=0 \
