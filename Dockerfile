@@ -1,12 +1,13 @@
-FROM oven/bun:latest AS builder
+FROM node:18-alpine AS builder
 
 WORKDIR /build
+RUN npm install -g pnpm
 COPY web/package.json .
-COPY web/bun.lock .
-RUN bun install
+COPY web/pnpm-lock.yaml .
+RUN pnpm install
 COPY ./web .
 COPY ./VERSION .
-RUN DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION=$(cat VERSION) bun run build
+RUN DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION=$(cat VERSION) pnpm run build
 
 FROM golang:alpine AS builder2
 
