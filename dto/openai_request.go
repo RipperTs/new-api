@@ -45,6 +45,7 @@ type GeneralOpenAIRequest struct {
 	Dimensions          int             `json:"dimensions,omitempty"`
 	Modalities          any             `json:"modalities,omitempty"`
 	Audio               any             `json:"audio,omitempty"`
+	Provider            any             `json:"provider,omitempty"`
 }
 
 type OpenAITools struct {
