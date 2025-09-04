@@ -122,6 +122,13 @@ const ChannelsTable = () => {
       }
     },
     {
+      title: '分组',
+      dataIndex: 'group',
+      render: (text, record, index) => {
+        return <Tag size="large">{text || '默认'}</Tag>;
+      }
+    },
+    {
       title: '响应时间',
       dataIndex: 'response_time',
       render: (text, record, index) => {
@@ -1020,15 +1027,6 @@ const ChannelsTable = () => {
             </Button>
           </Popconfirm>
           <Popconfirm
-            title="确定？"
-            okType={'secondary'}
-            onConfirm={updateAllChannelsBalance}
-          >
-            <Button theme="light" type="secondary" style={{ marginRight: 8 }}>
-              更新所有已启用通道余额
-            </Button>
-          </Popconfirm>
-          <Popconfirm
             title="确定是否要删除禁用通道？"
             content="此修改将不可逆"
             okType={'danger'}
@@ -1036,6 +1034,18 @@ const ChannelsTable = () => {
           >
             <Button theme="light" type="danger" style={{ marginRight: 8 }}>
               删除禁用通道
+            </Button>
+          </Popconfirm>
+
+          <Popconfirm
+              title="确定是否要修复数据库一致性？"
+              content="进行该操作时，可能导致渠道访问错误，请仅在数据库出现问题时使用"
+              okType={'warning'}
+              onConfirm={fixChannelsAbilities}
+              position={'top'}
+          >
+            <Button theme="light" type="secondary" style={{ marginRight: 8 }}>
+              修复数据库一致性
             </Button>
           </Popconfirm>
 
@@ -1049,48 +1059,6 @@ const ChannelsTable = () => {
           </Button>
         </Space>
       </div>
-      <div style={{ marginTop: 20 }}>
-        <Space>
-          <Typography.Text strong>开启批量删除</Typography.Text>
-          <Switch
-            label="开启批量删除"
-            uncheckedText="关"
-            aria-label="是否开启批量删除"
-            onChange={(v) => {
-              setEnableBatchDelete(v);
-            }}
-          ></Switch>
-          <Popconfirm
-            title="确定是否要删除所选通道？"
-            content="此修改将不可逆"
-            okType={'danger'}
-            onConfirm={batchDeleteChannels}
-            disabled={!enableBatchDelete}
-            position={'top'}
-          >
-            <Button
-              disabled={!enableBatchDelete}
-              theme="light"
-              type="danger"
-              style={{ marginRight: 8 }}
-            >
-              删除所选通道
-            </Button>
-          </Popconfirm>
-          <Popconfirm
-            title="确定是否要修复数据库一致性？"
-            content="进行该操作时，可能导致渠道访问错误，请仅在数据库出现问题时使用"
-            okType={'warning'}
-            onConfirm={fixChannelsAbilities}
-            position={'top'}
-          >
-            <Button theme="light" type="secondary" style={{ marginRight: 8 }}>
-              修复数据库一致性
-            </Button>
-          </Popconfirm>
-        </Space>
-      </div>
-
 
       <Table
         className={'channel-table'}

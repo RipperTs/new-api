@@ -18,7 +18,7 @@ export function renderGroup(group) {
   if (group === '') {
     return (
       <Tag size='large' key='default' color='orange'>
-        {i18next.t('用户分组')}
+        default
       </Tag>
     );
   }
