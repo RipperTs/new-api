@@ -41,13 +41,9 @@ func testChannel(channel *model.Channel, testModel string) (err error, openAIErr
 	}
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = &http.Request{
-		Method: "POST",
-		URL:    &url.URL{Path: "/v1/chat/completions"},
-		Body:   nil,
-		Header: make(http.Header),
-	}
 
+	// 根据模型类型确定正确的URL路径
+	requestPath := "/v1/chat/completions"
 	if testModel == "" {
 		if channel.TestModel != nil && *channel.TestModel != "" {
 			testModel = *channel.TestModel
@@ -58,7 +54,22 @@ func testChannel(channel *model.Channel, testModel string) (err error, openAIErr
 				testModel = "gpt-3.5-turbo"
 			}
 		}
-	} else {
+	}
+
+	// 判断是否为 Embedding 模型
+	if isEmbeddingModel(testModel) {
+		requestPath = "/v1/embeddings"
+	}
+
+	c.Request = &http.Request{
+		Method: "POST",
+		URL:    &url.URL{Path: requestPath},
+		Body:   nil,
+		Header: make(http.Header),
+	}
+
+	// 如果指定了testModel，处理模型映射
+	if testModel != "" {
 		modelMapping := *channel.ModelMapping
 		if modelMapping != "" && modelMapping != "{}" {
 			modelMap := make(map[string]string)
@@ -152,15 +163,23 @@ func testChannel(channel *model.Channel, testModel string) (err error, openAIErr
 	return nil, nil
 }
 
+// isEmbeddingModel 判断是否为 Embedding 模型
+func isEmbeddingModel(model string) bool {
+	// model 转为小写
+	model = strings.ToLower(model)
+	return strings.Contains(strings.ToLower(model), "embedding") ||
+		strings.HasPrefix(model, "m3e") ||
+		strings.Contains(model, "bge-") ||
+		strings.Contains(model, "embedding")
+}
+
 func buildTestRequest(model string) *dto.GeneralOpenAIRequest {
 	testRequest := &dto.GeneralOpenAIRequest{
 		Model:  "", // this will be set later
 		Stream: false,
 	}
 	// 先判断是否为 Embedding 模型
-	if strings.Contains(strings.ToLower(model), "embedding") ||
-		strings.HasPrefix(model, "m3e") ||
-		strings.Contains(model, "bge-") {
+	if isEmbeddingModel(model) {
 		testRequest.Model = model
 		testRequest.Input = []any{"hello world"}
 		return testRequest
