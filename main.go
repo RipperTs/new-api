@@ -104,6 +104,9 @@ func main() {
 		}
 		go controller.AutomaticallyTestChannels(frequency)
 	}
+
+	// 启动渠道检查定时任务，每30分钟检查一次已禁用渠道
+	go controller.StartChannelScheduler()
 	if common.IsMasterNode && constant.UpdateTask {
 		gopool.Go(func() {
 			controller.UpdateMidjourneyTaskBulk()

@@ -113,6 +113,12 @@ func GetChannelsByTag(tag string, idSort bool) ([]*Channel, error) {
 	return channels, err
 }
 
+func GetChannelsByStatus(status int) ([]*Channel, error) {
+	var channels []*Channel
+	err := DB.Where("status = ?", status).Order("priority desc").Find(&channels).Error
+	return channels, err
+}
+
 func SearchChannels(keyword string, group string, model string, idSort bool) ([]*Channel, error) {
 	var channels []*Channel
 	modelsCol := "`models`"
