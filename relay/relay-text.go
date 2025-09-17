@@ -203,7 +203,10 @@ func TextHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) {
 
 	if resp != nil {
 		httpResp = resp.(*http.Response)
-		relayInfo.IsStream = relayInfo.IsStream || strings.HasPrefix(httpResp.Header.Get("Content-Type"), "text/event-stream")
+		// 仅当客户端请求了 stream 时，才根据上游响应头确认是否继续走流式
+		if relayInfo.IsStream {
+			relayInfo.IsStream = strings.HasPrefix(httpResp.Header.Get("Content-Type"), "text/event-stream")
+		}
 		if httpResp.StatusCode != http.StatusOK {
 			openaiErr = service.RelayErrorHandler(httpResp)
 			// reset status code 重置状态码

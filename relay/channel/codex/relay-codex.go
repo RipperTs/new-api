@@ -27,6 +27,9 @@ func codexStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.R
 	var responseText strings.Builder
 
 	scanner := bufio.NewScanner(resp.Body)
+	// Codex 的 SSE 事件可能包含较长字段（如 reasoning.encrypted_content），提升扫描缓冲上限
+	buf := make([]byte, 0, 1024*1024)
+	scanner.Buffer(buf, 8*1024*1024)
 	scanner.Split(bufio.ScanLines)
 	dataChan := make(chan string)
 	stopChan := make(chan bool)
@@ -73,8 +76,8 @@ func codexStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.R
 					}},
 				}
 				js, _ := json.Marshal(final)
-				c.Render(-1, common.CustomEvent{Data: "data: " + string(js)})
-				c.Render(-1, common.CustomEvent{Data: "data: [DONE]"})
+				_ = service.StringData(c, string(js))
+				service.Done(c)
 				return false
 			}
 
@@ -113,7 +116,7 @@ func codexStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.R
 					}},
 				}
 				js, _ := json.Marshal(chunk)
-				c.Render(-1, common.CustomEvent{Data: "data: " + string(js)})
+				_ = service.StringData(c, string(js))
 				return true
 
 			case "response.output_item.done":
@@ -142,7 +145,7 @@ func codexStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.R
 								}},
 							}
 							js, _ := json.Marshal(chunk)
-							c.Render(-1, common.CustomEvent{Data: "data: " + string(js)})
+							_ = service.StringData(c, string(js))
 						}
 					}
 				}
@@ -166,13 +169,13 @@ func codexStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.R
 					}},
 				}
 				js, _ := json.Marshal(final)
-				c.Render(-1, common.CustomEvent{Data: "data: " + string(js)})
+				_ = service.StringData(c, string(js))
 				// 不直接结束，等待 [DONE]
 				return true
 			}
 			return true
 		case <-stopChan:
-			c.Render(-1, common.CustomEvent{Data: "data: [DONE]"})
+			service.Done(c)
 			return false
 		}
 	})
@@ -198,6 +201,9 @@ func codexHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayIn
 	var toolCalls []dto.ToolCall
 
 	scanner := bufio.NewScanner(resp.Body)
+	// 提升缓冲，避免 Codex 大字段导致单行过长
+	buf := make([]byte, 0, 1024*1024)
+	scanner.Buffer(buf, 8*1024*1024)
 	scanner.Split(bufio.ScanLines)
 	for scanner.Scan() {
 		line := scanner.Text()
