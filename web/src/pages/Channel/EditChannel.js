@@ -480,16 +480,12 @@ const EditChannel = (props) => {
               />
             </>
           )}
-          {(inputs.type === 8 || inputs.type === 45) && (
+          {(inputs.type === 8) && (
             <>
               <div style={{ marginTop: 10 }}>
                 <Banner
                   type={'warning'}
-                  description={
-                    inputs.type === 8
-                      ? t('如果你对接的是上游One API或者New API等转发项目，请使用OpenAI类型，不要使用此类型，除非你知道你在做什么。')
-                      : 'Codex 渠道将第三方 Codex Responses 转为 OpenAI 标准输出。'
-                  }
+                  description='如果你对接的是上游One API或者New API等转发项目，请使用OpenAI类型，不要使用此类型，除非你知道你在做什么。'
                 ></Banner>
               </div>
               <div style={{ marginTop: 10 }}>
@@ -499,7 +495,7 @@ const EditChannel = (props) => {
               </div>
               <Input
                 name="base_url"
-                placeholder="请输入完整的URL，例如：https://api.openai.com/v1/chat/completions"
+                placeholder='请输入完整的URL，例如：https://api.openai.com/v1/chat/completions'
                 onChange={(value) => {
                   handleInputChange('base_url', value);
                 }}
@@ -508,7 +504,7 @@ const EditChannel = (props) => {
               />
             </>
           )}
-          {inputs.type !== 3 && inputs.type !== 8 && inputs.type !== 22 && inputs.type !== 36 && inputs.type !== 45 && (
+          {inputs.type !== 3 && inputs.type !== 8 && inputs.type !== 22 && inputs.type !== 36 && (
             <>
               <div style={{ marginTop: 10 }}>
                 <Typography.Text strong>{t('请求地址')}：</Typography.Text>
@@ -516,7 +512,7 @@ const EditChannel = (props) => {
               <Input
                 label={t('请求地址')}
                 name="base_url"
-                placeholder={t('此项可选，用于通过代理站来进行 API 调用')}
+                placeholder={inputs.type === 45 ? '填入 Codex 镜像站接口地址, 通常以 /v1 结尾' :t('此项可选，用于通过代理站来进行 API 调用')}
                 onChange={(value) => {
                   handleInputChange('base_url', value);
                 }}
