@@ -55,6 +55,8 @@ function type2secretPrompt(type) {
       return '按照如下格式输入：AppId|SecretId|SecretKey';
     case 33:
       return '按照如下格式输入：Ak|Sk|Region';
+    case 45:
+      return '请输入 Codex 的鉴权秘钥 (非Access Token)';
     default:
       return '请输入渠道对应的鉴权密钥';
   }
@@ -478,22 +480,26 @@ const EditChannel = (props) => {
               />
             </>
           )}
-          {inputs.type === 8 && (
+          {(inputs.type === 8 || inputs.type === 45) && (
             <>
               <div style={{ marginTop: 10 }}>
                 <Banner
                   type={'warning'}
-                  description={t('如果你对接的是上游One API或者New API等转发项目，请使用OpenAI类型，不要使用此类型，除非你知道你在做什么。')}
+                  description={
+                    inputs.type === 8
+                      ? t('如果你对接的是上游One API或者New API等转发项目，请使用OpenAI类型，不要使用此类型，除非你知道你在做什么。')
+                      : 'Codex 渠道将第三方 Codex Responses 转为 OpenAI 标准输出。'
+                  }
                 ></Banner>
               </div>
               <div style={{ marginTop: 10 }}>
                 <Typography.Text strong>
-                  {t('完整的 Base URL，支持变量{model}')}：
+                  {t('Base URL，支持变量{model}')}：
                 </Typography.Text>
               </div>
               <Input
                 name="base_url"
-                placeholder={t('请输入完整的URL，例如：https://api.openai.com/v1/chat/completions')}
+                placeholder="请输入完整的URL，例如：https://api.openai.com/v1/chat/completions"
                 onChange={(value) => {
                   handleInputChange('base_url', value);
                 }}
@@ -502,13 +508,13 @@ const EditChannel = (props) => {
               />
             </>
           )}
-          {inputs.type !== 3 && inputs.type !== 8 && inputs.type !== 22 && inputs.type !== 36 && (
+          {inputs.type !== 3 && inputs.type !== 8 && inputs.type !== 22 && inputs.type !== 36 && inputs.type !== 45 && (
             <>
               <div style={{ marginTop: 10 }}>
-                <Typography.Text strong>{t('代理')}：</Typography.Text>
+                <Typography.Text strong>{t('请求地址')}：</Typography.Text>
               </div>
               <Input
-                label={t('代理')}
+                label={t('请求地址')}
                 name="base_url"
                 placeholder={t('此项可选，用于通过代理站来进行 API 调用')}
                 onChange={(value) => {
@@ -982,7 +988,7 @@ const EditChannel = (props) => {
             value={inputs.proxy_url}
             autoComplete="new-password"
           />
-          {inputs.type === 8 && (
+          {(inputs.type === 8 || inputs.type === 45) && (
           <>
             <div style={{ marginTop: 10 }}>
               <Typography.Text strong>
@@ -1008,9 +1014,13 @@ const EditChannel = (props) => {
               onClick={() => {
                 handleInputChange(
                   'setting',
-                  JSON.stringify({
-                    force_format: true
-                  }, null, 2)
+                  JSON.stringify(
+                    inputs.type === 45
+                      ? { chatgpt_account_id: 'your_account_id' }
+                      : { force_format: true },
+                    null,
+                    2
+                  )
                 );
               }}
             >

@@ -232,6 +232,7 @@ const (
 	ChannelTypeMistral        = 42
 	ChannelTypeDeepSeek       = 43
 	ChannelTypeClaudeCode     = 44
+	ChannelTypeCodex          = 45
 
 	ChannelTypeDummy // this one is only for count, do not add any channel after this
 
@@ -283,4 +284,5 @@ var ChannelBaseURLs = []string{
 	"https://api.mistral.ai",                    //42
 	"https://api.deepseek.com",                  //43
 	"https://api.packycode.com",                 //44
+	"https://apic1.ohmycdn.com/api/v1/ai/openai/codex-omg/v1", //45 (codex)
 }

@@ -28,6 +28,7 @@ const (
 	APITypeMistral
 	APITypeDeepSeek
 	APITypeClaudeCode
+	APITypeCodex
 
 	APITypeDummy // this one is only for count, do not add any channel after this
 )
@@ -81,6 +82,8 @@ func ChannelType2APIType(channelType int) (int, bool) {
 		apiType = APITypeDeepSeek
 	case common.ChannelTypeClaudeCode:
 		apiType = APITypeClaudeCode
+	case common.ChannelTypeCodex:
+		apiType = APITypeCodex
 	}
 	if apiType == -1 {
 		return APITypeOpenAI, false

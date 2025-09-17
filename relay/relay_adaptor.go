@@ -9,7 +9,9 @@ import (
 	"one-api/relay/channel/claude"
 	"one-api/relay/channel/claudecode"
 	"one-api/relay/channel/cloudflare"
+	"one-api/relay/channel/codex"
 	"one-api/relay/channel/cohere"
+	
 	"one-api/relay/channel/deepseek"
 	"one-api/relay/channel/dify"
 	"one-api/relay/channel/gemini"
@@ -77,6 +79,8 @@ func GetAdaptor(apiType int) channel.Adaptor {
 		return &deepseek.Adaptor{}
 	case constant.APITypeClaudeCode:
 		return &claudecode.Adaptor{}
+	case constant.APITypeCodex:
+		return &codex.Adaptor{}
 	}
 	return nil
 }
