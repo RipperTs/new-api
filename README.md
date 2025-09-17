@@ -48,7 +48,8 @@
 3. 支持自定义请求头
 4. 渠道支持设置代理
 5. 支持Embedding模型测试
-6. 支持 Claude Code 的渠道
+6. 支持 Claude Code 的渠道（镜像站）
+7. 支持 Codex 的渠道（镜像站）
 
 
 ## 🚀 Docker 部署
