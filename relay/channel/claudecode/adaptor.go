@@ -56,7 +56,7 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 
 	// 设置 Claude Code 特有的请求头
 	req.Set("X-Stainless-Retry-Count", "0")
-	req.Set("X-Stainless-Timeout", "600")
+	req.Set("X-Stainless-Timeout", "60")
 	req.Set("X-Stainless-Lang", "js")
 	req.Set("X-Stainless-Package-Version", "0.55.1")
 	req.Set("X-Stainless-OS", "MacOS")
@@ -65,9 +65,13 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 	req.Set("x-stainless-helper-method", "stream")
 	req.Set("x-app", "cli")
 	req.Set("User-Agent", "claude-cli/1.0.44 (external, cli)")
-	req.Set("anthropic-beta", "fine-grained-tool-streaming-2025-05-14")
+	req.Set("anthropic-beta", "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14")
 	req.Set("X-Stainless-Runtime-Version", "v20.18.1")
 	req.Set("anthropic-dangerous-direct-browser-access", "true")
+	// 兼容验证要求的额外头
+	req.Set("Authorization", fmt.Sprintf("Bearer %s", info.ApiKey))
+	req.Set("accept-language", "*")
+	req.Set("sec-fetch-mode", "cors")
 
 	return nil
 }
@@ -80,7 +84,7 @@ func (a *Adaptor) ConvertRequest(c *gin.Context, info *relaycommon.RelayInfo, re
 	if a.RequestMode == RequestModeCompletion {
 		return RequestOpenAI2ClaudeComplete(*request), nil
 	} else {
-		return RequestOpenAI2ClaudeMessage(*request)
+		return RequestOpenAI2ClaudeMessage(*request, info)
 	}
 }
 

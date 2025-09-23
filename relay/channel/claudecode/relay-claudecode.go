@@ -2,6 +2,7 @@ package claudecode
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 func stopReasonClaude2OpenAI(reason string) string {
@@ -59,7 +61,7 @@ func RequestOpenAI2ClaudeComplete(textRequest dto.GeneralOpenAIRequest) *ClaudeR
 	return &claudeRequest
 }
 
-func RequestOpenAI2ClaudeMessage(textRequest dto.GeneralOpenAIRequest) (*ClaudeRequest, error) {
+func RequestOpenAI2ClaudeMessage(textRequest dto.GeneralOpenAIRequest, info *relaycommon.RelayInfo) (*ClaudeRequest, error) {
 	claudeTools := make([]Tool, 0, len(textRequest.Tools))
 
 	for _, tool := range textRequest.Tools {
@@ -154,9 +156,16 @@ func RequestOpenAI2ClaudeMessage(textRequest dto.GeneralOpenAIRequest) (*ClaudeR
 		},
 	}
 
-	// 设置 metadata
+	// 基于渠道 Key 生成稳定的 user_id
+	// 格式: user_<64hex>_account__session_<uuid>
+	key := ""
+	if info != nil {
+		key = info.ApiKey
+	}
+	hash := sha256.Sum256([]byte(key))
+	userID := fmt.Sprintf("user_%x_account__session_%s", hash, uuid.New().String())
 	claudeRequest.Metadata = map[string]interface{}{
-		"user_id": "0002998be8a014e31GLnKPFsffu7iKdbd392beb1416f6406508lsopmm566dc5f",
+		"user_id": userID,
 	}
 
 	for _, message := range formatMessages {
