@@ -118,7 +118,6 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 		err, usage = ClaudeHandler(c, resp, a.RequestMode, info)
 	}
 
-	fmt.Printf("[ClaudeCode] DoResponse finished, error: %v\n", err)
 	return
 }
 
