@@ -110,7 +110,6 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	// 检查响应类型，如果是 text/event-stream，强制使用流式处理
 	contentType := resp.Header.Get("Content-Type")
 	if strings.Contains(contentType, "text/event-stream") {
-		fmt.Printf("[ClaudeCode] Detected SSE response, forcing stream mode\n")
 		err, usage = ClaudeStreamHandler(c, resp, info, a.RequestMode)
 	} else if info.IsStream {
 		err, usage = ClaudeStreamHandler(c, resp, info, a.RequestMode)
