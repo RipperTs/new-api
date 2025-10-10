@@ -100,6 +100,64 @@ const EditChannel = (props) => {
   const [basicModels, setBasicModels] = useState([]);
   const [fullModels, setFullModels] = useState([]);
   const [customModel, setCustomModel] = useState('');
+  // 模型重定向行编辑：[{ from: string, to: string }]
+  const [modelMappingRows, setModelMappingRows] = useState([]);
+
+  // 工具：JSON字符串 -> 行
+  const parseModelMappingToRows = (jsonStr) => {
+    if (!jsonStr || typeof jsonStr !== 'string' || jsonStr.trim() === '') return [];
+    try {
+      const obj = JSON.parse(jsonStr);
+      if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+        return Object.entries(obj).map(([from, to]) => ({ from, to: String(to) }));
+      }
+    } catch (e) {
+      // ignore parse error, keep empty rows
+    }
+    return [];
+  };
+
+  // 工具：行 -> 美化后的 JSON 字符串（空则返回空串）
+  const rowsToJSONString = (rows) => {
+    const obj = {};
+    rows.forEach((r) => {
+      const from = (r.from || '').trim();
+      const to = (r.to || '').trim();
+      if (from && to) obj[from] = to;
+    });
+    const keys = Object.keys(obj);
+    if (keys.length === 0) return '';
+    return JSON.stringify(obj, null, 2);
+  };
+
+  // 同步：当服务端载入的 model_mapping 变化时，刷新行编辑器
+  useEffect(() => {
+    setModelMappingRows(parseModelMappingToRows(inputs.model_mapping));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inputs.model_mapping]);
+
+  // 行变更时，同时回填 inputs.model_mapping，保持提交逻辑不变
+  const updateRows = (rows) => {
+    setModelMappingRows(rows);
+    const json = rowsToJSONString(rows);
+    handleInputChange('model_mapping', json);
+  };
+
+  const addMappingRow = () => {
+    updateRows([...(modelMappingRows || []), { from: '', to: '' }]);
+  };
+
+  const removeMappingRow = (idx) => {
+    const next = [...modelMappingRows];
+    next.splice(idx, 1);
+    updateRows(next);
+  };
+
+  const changeRow = (idx, field, value) => {
+    const next = [...modelMappingRows];
+    next[idx] = { ...next[idx], [field]: value };
+    updateRows(next);
+  };
   const handleInputChange = (name, value) => {
     setInputs((inputs) => ({ ...inputs, [name]: value }));
     if (name === 'type') {
@@ -179,6 +237,8 @@ const EditChannel = (props) => {
           2
         );
       }
+      // 初始化行编辑器
+      setModelMappingRows(parseModelMappingToRows(data.model_mapping));
       setInputs(data);
       if (data.auto_ban === 0) {
         setAutoBan(false);
@@ -746,31 +806,64 @@ const EditChannel = (props) => {
           <div style={{ marginTop: 10 }}>
             <Typography.Text strong>{t('模型重定向')}：</Typography.Text>
           </div>
-          <TextArea
-            placeholder={t('此项可选，用于修改请求体中的模型名称，为一个 JSON 字符串，键为请求中模型名称，值为要替换的模型名称，例如：') + `\n${JSON.stringify(MODEL_MAPPING_EXAMPLE, null, 2)}`}
-            name="model_mapping"
-            onChange={(value) => {
-              handleInputChange('model_mapping', value);
-            }}
-            autosize
-            value={inputs.model_mapping}
-            autoComplete="new-password"
-          />
-          <Typography.Text
+          {/* 以行的形式编辑映射 */}
+          <div
             style={{
-              color: 'rgba(var(--semi-blue-5), 1)',
-              userSelect: 'none',
-              cursor: 'pointer'
-            }}
-            onClick={() => {
-              handleInputChange(
-                'model_mapping',
-                JSON.stringify(MODEL_MAPPING_EXAMPLE, null, 2)
-              );
+              border: '1px solid var(--semi-color-border)',
+              borderRadius: 6,
+              padding: 12,
+              background: 'var(--semi-color-bg-0)'
             }}
           >
-            {t('填入模板')}
-          </Typography.Text>
+            <div style={{ maxHeight: 300, overflowY: 'auto', marginBottom: 8, paddingRight: 4 }}>
+              {(modelMappingRows || []).length === 0 && (
+                <Typography.Text type='tertiary'>
+                  {t('未添加规则，点击下方“新增一条”开始')}。
+                </Typography.Text>
+              )}
+              {(modelMappingRows || []).map((row, idx) => (
+                <div key={idx} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                  <Input
+                    style={{ flex: 1 }}
+                    placeholder={t('实际请求的模型名')}
+                    value={row.from}
+                    onChange={(v) => changeRow(idx, 'from', v)}
+                    autoComplete='off'
+                  />
+                  <Typography.Text style={{ lineHeight: '32px' }}>→</Typography.Text>
+                  <Input
+                    style={{ flex: 1 }}
+                    placeholder={t('重定向为真实可用的模型名')}
+                    value={row.to}
+                    onChange={(v) => changeRow(idx, 'to', v)}
+                    autoComplete='off'
+                  />
+                  <Button type='danger' onClick={() => removeMappingRow(idx)}>
+                    {t('删除')}
+                  </Button>
+                </div>
+              ))}
+            </div>
+            <Space>
+              <Button type='primary' onClick={addMappingRow}>
+                {t('新增一条')}
+              </Button>
+              <Button
+                type='warning'
+                onClick={() => updateRows([])}
+              >
+                {t('清空')}
+              </Button>
+              <Button
+                onClick={() => {
+                  const rows = Object.entries(MODEL_MAPPING_EXAMPLE).map(([from, to]) => ({ from, to }));
+                  updateRows(rows);
+                }}
+              >
+                {t('填入模板')}
+              </Button>
+            </Space>
+          </div>
           <div style={{ marginTop: 10 }}>
             <Typography.Text strong>{t('密钥')}：</Typography.Text>
           </div>
