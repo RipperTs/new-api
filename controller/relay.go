@@ -299,7 +299,17 @@ func processChannelError(c *gin.Context, channelId int, channelType int, channel
 		fmt.Sprintf("通道 %s 调用失败，模型 %s，状态码 %d，错误信息 %s", channelName, originalModel, err.StatusCode, err.Error.Message))
 
 	if service.ShouldDisableChannel(channelType, err) && autoBan {
-		service.DisableChannel(channelId, channelName, err.Error.Message)
+		// 检查是否还有其他可用渠道支持相同的模型
+		group := c.GetString("group")
+		hasOtherChannels := model.HasOtherAvailableChannels(group, originalModel, channelId)
+
+		if hasOtherChannels {
+			// 还有其他可用渠道，正常禁用当前渠道
+			service.DisableChannel(channelId, channelName, err.Error.Message)
+		} else {
+			// 这是最后一个可用渠道，不禁用，只记录警告
+			common.LogWarn(c, fmt.Sprintf("channel #%d is the last available channel for model %s in group %s, skipping auto-disable", channelId, originalModel, group))
+		}
 	}
 }
 

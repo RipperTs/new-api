@@ -252,6 +252,26 @@ func UpdateAbilityByTag(tag string, newTag *string, priority *int64, weight *uin
 	return DB.Model(&Ability{}).Where("tag = ?", tag).Updates(ability).Error
 }
 
+// HasOtherAvailableChannels 检查除了指定渠道外，是否还有其他可用的渠道支持相同的模型
+func HasOtherAvailableChannels(group string, model string, excludeChannelId int) bool {
+	trueVal := "1"
+	if common.UsingPostgreSQL {
+		trueVal = "true"
+	}
+
+	var count int64
+	err := DB.Model(&Ability{}).
+		Where(groupCol+" = ? AND model = ? AND enabled = "+trueVal+" AND channel_id != ?", group, model, excludeChannelId).
+		Count(&count).Error
+
+	if err != nil {
+		common.SysError(fmt.Sprintf("Check other available channels failed: %s", err.Error()))
+		return true // 出错时保守处理，不禁用渠道
+	}
+
+	return count > 0
+}
+
 func FixAbility() (int, error) {
 	var channelIds []int
 	count := 0
