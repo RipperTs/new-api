@@ -84,6 +84,10 @@ func (c *ChatCompletionsStreamResponseChoiceDelta) GetContentString() string {
 
 // EnsureReasoningCompatibility 确保 reasoning 和 reasoning_content 的兼容性
 func (c *ChatCompletionsStreamResponseChoiceDelta) EnsureReasoningCompatibility() {
+	// 快速路径：如果都不为nil或都为nil，直接返回
+	if (c.Reasoning == nil) == (c.ReasoningContent == nil) {
+		return
+	}
 	// 如果 reasoning 有值但 reasoning_content 没有值，复制 reasoning 到 reasoning_content
 	if c.Reasoning != nil && c.ReasoningContent == nil {
 		c.ReasoningContent = c.Reasoning
