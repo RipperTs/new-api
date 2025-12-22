@@ -1,5 +1,7 @@
 package dto
 
+import "encoding/json"
+
 type TextResponseWithError struct {
 	Id      string                        `json:"id"`
 	Object  string                        `json:"object"`
@@ -62,9 +64,11 @@ type ChatCompletionsStreamResponseChoice struct {
 }
 
 type ChatCompletionsStreamResponseChoiceDelta struct {
-	Content   *string    `json:"content,omitempty"`
-	Role      string     `json:"role,omitempty"`
-	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+	Content          *string          `json:"content,omitempty"`
+	Role             string           `json:"role,omitempty"`
+	ToolCalls        []ToolCall       `json:"tool_calls,omitempty"`
+	ReasoningContent *json.RawMessage `json:"reasoning_content,omitempty"`
+	Reasoning        *json.RawMessage `json:"reasoning,omitempty"`
 }
 
 func (c *ChatCompletionsStreamResponseChoiceDelta) SetContentString(s string) {
@@ -76,6 +80,18 @@ func (c *ChatCompletionsStreamResponseChoiceDelta) GetContentString() string {
 		return ""
 	}
 	return *c.Content
+}
+
+// EnsureReasoningCompatibility 确保 reasoning 和 reasoning_content 的兼容性
+func (c *ChatCompletionsStreamResponseChoiceDelta) EnsureReasoningCompatibility() {
+	// 如果 reasoning 有值但 reasoning_content 没有值，复制 reasoning 到 reasoning_content
+	if c.Reasoning != nil && c.ReasoningContent == nil {
+		c.ReasoningContent = c.Reasoning
+	}
+	// 如果 reasoning_content 有值但 reasoning 没有值，复制 reasoning_content 到 reasoning
+	if c.ReasoningContent != nil && c.Reasoning == nil {
+		c.Reasoning = c.ReasoningContent
+	}
 }
 
 type ToolCall struct {

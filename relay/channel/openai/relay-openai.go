@@ -36,7 +36,26 @@ func sendStreamData(c *gin.Context, data string, forceFormat bool) error {
 		if err := json.Unmarshal(common.StringToByteSlice(data), &lastStreamResponse); err != nil {
 			return err
 		}
+		// 确保流式响应中 reasoning 和 reasoning_content 字段兼容性
+		for i := range lastStreamResponse.Choices {
+			lastStreamResponse.Choices[i].Delta.EnsureReasoningCompatibility()
+		}
 		return service.ObjectData(c, lastStreamResponse)
+	}
+
+	// 对于非forceFormat的情况，也需要处理兼容性
+	var streamResponse dto.ChatCompletionsStreamResponse
+	if err := json.Unmarshal(common.StringToByteSlice(data), &streamResponse); err == nil {
+		// 确保流式响应中 reasoning 和 reasoning_content 字段兼容性
+		for i := range streamResponse.Choices {
+			streamResponse.Choices[i].Delta.EnsureReasoningCompatibility()
+		}
+		// 重新序列化修改后的数据
+		modifiedData, err := json.Marshal(streamResponse)
+		if err != nil {
+			return err
+		}
+		return service.StringData(c, string(modifiedData))
 	}
 	return service.StringData(c, data)
 }
@@ -161,6 +180,7 @@ func OaiStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rel
 					//	usage = streamResponse.Usage
 					//}
 					for _, choice := range streamResponse.Choices {
+						choice.Delta.EnsureReasoningCompatibility()
 						responseTextBuilder.WriteString(choice.Delta.GetContentString())
 						if choice.Delta.ToolCalls != nil {
 							if len(choice.Delta.ToolCalls) > toolCount {
@@ -181,6 +201,7 @@ func OaiStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rel
 				//	containStreamUsage = true
 				//}
 				for _, choice := range streamResponse.Choices {
+					choice.Delta.EnsureReasoningCompatibility()
 					responseTextBuilder.WriteString(choice.Delta.GetContentString())
 					if choice.Delta.ToolCalls != nil {
 						if len(choice.Delta.ToolCalls) > toolCount {
@@ -255,8 +276,20 @@ func OpenaiHandler(c *gin.Context, resp *http.Response, promptTokens int, model 
 			StatusCode: resp.StatusCode,
 		}, nil
 	}
-	// Reset response body
-	resp.Body = io.NopCloser(bytes.NewBuffer(responseBody))
+
+	// 确保 reasoning 和 reasoning_content 字段兼容性
+	for i := range simpleResponse.Choices {
+		simpleResponse.Choices[i].Message.EnsureReasoningCompatibility()
+	}
+
+	// 重新序列化修改后的响应数据
+	modifiedResponseBody, err := json.Marshal(simpleResponse)
+	if err != nil {
+		return service.OpenAIErrorWrapper(err, "marshal_modified_response_failed", http.StatusInternalServerError), nil
+	}
+
+	// Reset response body with modified data
+	resp.Body = io.NopCloser(bytes.NewBuffer(modifiedResponseBody))
 	// We shouldn't set the header before we parse the response body, because the parse part may fail.
 	// And then we will have to send an error response, but in this case, the header has already been set.
 	// So the httpClient will be confused by the response.
@@ -270,6 +303,7 @@ func OpenaiHandler(c *gin.Context, resp *http.Response, promptTokens int, model 
 		return service.OpenAIErrorWrapper(err, "copy_response_body_failed", http.StatusInternalServerError), nil
 	}
 	resp.Body.Close()
+
 	if simpleResponse.Usage.TotalTokens == 0 || (simpleResponse.Usage.PromptTokens == 0 && simpleResponse.Usage.CompletionTokens == 0) {
 		completionTokens := 0
 		for _, choice := range simpleResponse.Choices {

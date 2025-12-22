@@ -1,6 +1,8 @@
 package dto
 
-import "encoding/json"
+import (
+	"encoding/json"
+)
 
 type ResponseFormat struct {
 	Type       string            `json:"type,omitempty"`
@@ -90,6 +92,7 @@ type Message struct {
 	Role             string           `json:"role"`
 	Content          json.RawMessage  `json:"content"`
 	ReasoningContent *json.RawMessage `json:"reasoning_content,omitempty"`
+	Reasoning        *json.RawMessage `json:"reasoning,omitempty"`
 	Name             *string          `json:"name,omitempty"`
 	ToolCalls        json.RawMessage  `json:"tool_calls,omitempty"`
 	ToolCallId       string           `json:"tool_call_id,omitempty"`
@@ -153,6 +156,18 @@ func (m *Message) IsStringContent() bool {
 		return true
 	}
 	return false
+}
+
+// EnsureReasoningCompatibility 确保 reasoning 和 reasoning_content 的兼容性
+func (m *Message) EnsureReasoningCompatibility() {
+	// 如果 reasoning 有值但 reasoning_content 没有值，复制 reasoning 到 reasoning_content
+	if m.Reasoning != nil && m.ReasoningContent == nil {
+		m.ReasoningContent = m.Reasoning
+	}
+	// 如果 reasoning_content 有值但 reasoning 没有值，复制 reasoning_content 到 reasoning
+	if m.ReasoningContent != nil && m.Reasoning == nil {
+		m.Reasoning = m.ReasoningContent
+	}
 }
 
 func (m *Message) ParseContent() []MediaContent {
