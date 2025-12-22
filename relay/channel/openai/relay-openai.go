@@ -277,7 +277,38 @@ func OpenaiHandler(c *gin.Context, resp *http.Response, promptTokens int, model 
 		}, nil
 	}
 
-	// 确保 reasoning 和 reasoning_content 字段兼容性
+	// Embeddings 请求：保持原有响应结构，不做 reasoning 兼容处理
+	if relayconstant.Path2RelayMode(c.Request.URL.Path) == relayconstant.RelayModeEmbeddings {
+		// Reset response body
+		resp.Body = io.NopCloser(bytes.NewBuffer(responseBody))
+		// 透传上游 Header，但删除 Content-Length 让 Go 自行处理
+		for k, v := range resp.Header {
+			c.Writer.Header().Set(k, v[0])
+		}
+		c.Writer.Header().Del("Content-Length")
+		c.Writer.WriteHeader(resp.StatusCode)
+		_, err = io.Copy(c.Writer, resp.Body)
+		if err != nil {
+			return service.OpenAIErrorWrapper(err, "copy_response_body_failed", http.StatusInternalServerError), nil
+		}
+		resp.Body.Close()
+
+		if simpleResponse.Usage.TotalTokens == 0 || (simpleResponse.Usage.PromptTokens == 0 && simpleResponse.Usage.CompletionTokens == 0) {
+			completionTokens := 0
+			for _, choice := range simpleResponse.Choices {
+				ctkm, _ := service.CountTextToken(string(choice.Message.Content), model)
+				completionTokens += ctkm
+			}
+			simpleResponse.Usage = dto.Usage{
+				PromptTokens:     promptTokens,
+				CompletionTokens: completionTokens,
+				TotalTokens:      promptTokens + completionTokens,
+			}
+		}
+		return nil, &simpleResponse.Usage
+	}
+
+	// Chat / Completions 等：做 reasoning 字段兼容处理
 	for i := range simpleResponse.Choices {
 		simpleResponse.Choices[i].Message.EnsureReasoningCompatibility()
 	}
@@ -297,6 +328,8 @@ func OpenaiHandler(c *gin.Context, resp *http.Response, promptTokens int, model 
 	for k, v := range resp.Header {
 		c.Writer.Header().Set(k, v[0])
 	}
+	// 删除 Content-Length，让 Go 根据实际响应体处理长度
+	c.Writer.Header().Del("Content-Length")
 	c.Writer.WriteHeader(resp.StatusCode)
 	_, err = io.Copy(c.Writer, resp.Body)
 	if err != nil {
