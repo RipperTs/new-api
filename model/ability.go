@@ -137,10 +137,31 @@ func GetRandomSatisfiedChannelByTypes(group string, model string, retry int, all
 
 	var abilities []Ability
 
-	channelQuery := getChannelQuery(group, model, retry).
-		Model(&Ability{}).
+	trueVal := "1"
+	if common.UsingPostgreSQL {
+		trueVal = "true"
+	}
+
+	groupColWithTable := "abilities." + groupCol
+
+	channelQuery := DB.Model(&Ability{}).
 		Joins("JOIN channels ON channels.id = abilities.channel_id").
+		Where(groupColWithTable+" = ? and abilities.model = ? and abilities.enabled = "+trueVal, group, model).
 		Where("channels.type IN ?", allowedTypes)
+
+	if retry == 0 {
+		maxPrioritySubQuery := DB.Model(&Ability{}).
+			Select("MAX(priority)").
+			Where(groupColWithTable+" = ? and abilities.model = ? and abilities.enabled = "+trueVal, group, model)
+		channelQuery = channelQuery.Where("abilities.priority = (?)", maxPrioritySubQuery)
+	} else {
+		priority, err := getPriority(group, model, retry)
+		if err != nil {
+			common.SysError(fmt.Sprintf("Get priority failed: %s", err.Error()))
+		} else {
+			channelQuery = channelQuery.Where("abilities.priority = ?", priority)
+		}
+	}
 
 	err := channelQuery.Order("weight DESC").Find(&abilities).Error
 	if err != nil {
