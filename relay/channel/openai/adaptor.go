@@ -109,12 +109,16 @@ func (a *Adaptor) ConvertRequest(c *gin.Context, info *relaycommon.RelayInfo, re
 	if info.ChannelType != common.ChannelTypeOpenAI && info.ChannelType != common.ChannelTypeAzure {
 		request.StreamOptions = nil
 	}
-	if strings.HasPrefix(request.Model, "o") || strings.HasPrefix(request.Model, "gpt-5") {
+	isOSeries := strings.HasPrefix(request.Model, "o")
+	isGpt5Series := strings.HasPrefix(request.Model, "gpt-5")
+	if isOSeries || isGpt5Series {
 		if request.MaxCompletionTokens == 0 && request.MaxTokens != 0 {
 			request.MaxCompletionTokens = request.MaxTokens
 			request.MaxTokens = 0
 		}
-		request.Temperature = nil
+		if isOSeries {
+			request.Temperature = nil
+		}
 		if strings.HasSuffix(request.Model, "-high") {
 			request.ReasoningEffort = "high"
 			request.Model = strings.TrimSuffix(request.Model, "-high")
@@ -129,7 +133,7 @@ func (a *Adaptor) ConvertRequest(c *gin.Context, info *relaycommon.RelayInfo, re
 		info.UpstreamModelName = request.Model
 
 		// o系列模型developer适配（o1-mini除外）
-		if !strings.HasPrefix(request.Model, "o1-mini") && !strings.HasPrefix(request.Model, "o1-preview") {
+		if isOSeries && !strings.HasPrefix(request.Model, "o1-mini") && !strings.HasPrefix(request.Model, "o1-preview") {
 			//修改第一个Message的内容，将system改为developer
 			if len(request.Messages) > 0 && request.Messages[0].Role == "system" {
 				request.Messages[0].Role = "developer"
@@ -138,6 +142,78 @@ func (a *Adaptor) ConvertRequest(c *gin.Context, info *relaycommon.RelayInfo, re
 	}
 
 	return request, nil
+}
+
+func (a *Adaptor) ConvertResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request map[string]any) (any, error) {
+	if request == nil {
+		return nil, errors.New("request is nil")
+	}
+
+	model, _ := request["model"].(string)
+	if model == "" {
+		return nil, errors.New("model is required")
+	}
+
+	// 兼容老字段：max_tokens/max_completion_tokens -> max_output_tokens
+	if _, ok := request["max_output_tokens"]; !ok {
+		if v, ok := request["max_completion_tokens"]; ok && v != nil {
+			request["max_output_tokens"] = v
+		} else if v, ok := request["max_tokens"]; ok && v != nil {
+			request["max_output_tokens"] = v
+		}
+	}
+	delete(request, "max_tokens")
+	delete(request, "max_completion_tokens")
+
+	if strings.HasSuffix(model, "-high") {
+		model = strings.TrimSuffix(model, "-high")
+		setReasoningEffort(request, "high")
+	} else if strings.HasSuffix(model, "-low") {
+		model = strings.TrimSuffix(model, "-low")
+		setReasoningEffort(request, "low")
+	} else if strings.HasSuffix(model, "-medium") {
+		model = strings.TrimSuffix(model, "-medium")
+		setReasoningEffort(request, "medium")
+	}
+
+	// o / gpt-5 系列：temperature 不支持，避免上游 400
+	isOSeries := strings.HasPrefix(model, "o")
+	if isOSeries {
+		delete(request, "temperature")
+
+		// o系列模型 developer 适配（o1-mini / o1-preview 除外）
+		if !strings.HasPrefix(model, "o1-mini") && !strings.HasPrefix(model, "o1-preview") {
+			if inputArr, ok := request["input"].([]any); ok && len(inputArr) > 0 {
+				if first, ok := inputArr[0].(map[string]any); ok {
+					if firstType, _ := first["type"].(string); firstType == "message" {
+						if role, _ := first["role"].(string); role == "system" {
+							first["role"] = "developer"
+							inputArr[0] = first
+							request["input"] = inputArr
+						}
+					}
+				}
+			}
+		}
+	}
+
+	request["model"] = model
+	info.UpstreamModelName = model
+	return request, nil
+}
+
+func setReasoningEffort(request map[string]any, effort string) {
+	if effort == "" {
+		return
+	}
+	reasoning, _ := request["reasoning"].(map[string]any)
+	if reasoning == nil {
+		reasoning = make(map[string]any, 1)
+	}
+	if _, exists := reasoning["effort"]; !exists {
+		reasoning["effort"] = effort
+	}
+	request["reasoning"] = reasoning
 }
 
 func (a *Adaptor) ConvertRerankRequest(c *gin.Context, relayMode int, request dto.RerankRequest) (any, error) {
@@ -211,6 +287,12 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	switch info.RelayMode {
 	case constant.RelayModeRealtime:
 		err, usage = OpenaiRealtimeHandler(c, info)
+	case constant.RelayModeResponses:
+		if info.IsStream {
+			err, usage = OpenaiResponsesStreamHandler(c, resp, info)
+		} else {
+			err, usage = OpenaiResponsesHandler(c, resp, info)
+		}
 	case constant.RelayModeAudioSpeech:
 		err, usage = OpenaiTTSHandler(c, resp, info)
 	case constant.RelayModeAudioTranslation:

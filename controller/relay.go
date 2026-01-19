@@ -14,7 +14,6 @@ import (
 	"one-api/middleware"
 	"one-api/model"
 	"one-api/relay"
-	"one-api/relay/constant"
 	relayconstant "one-api/relay/constant"
 	"one-api/service"
 	"one-api/setting"
@@ -34,6 +33,8 @@ func relayHandler(c *gin.Context, relayMode int) *dto.OpenAIErrorWithStatusCode 
 		err = relay.AudioHelper(c)
 	case relayconstant.RelayModeRerank:
 		err = relay.RerankHelper(c, relayMode)
+	case relayconstant.RelayModeResponses:
+		err = relay.ResponsesHelper(c)
 	default:
 		err = relay.TextHelper(c)
 	}
@@ -102,7 +103,7 @@ func Playground(c *gin.Context) {
 }
 
 func Relay(c *gin.Context) {
-	relayMode := constant.Path2RelayMode(c.Request.URL.Path)
+	relayMode := relayconstant.Path2RelayMode(c.Request.URL.Path)
 	requestId := c.GetString(common.RequestIdKey)
 	group := c.GetString("group")
 	originalModel := c.GetString("original_model")
@@ -164,7 +165,7 @@ func WssRelay(c *gin.Context) {
 		return
 	}
 
-	relayMode := constant.Path2RelayMode(c.Request.URL.Path)
+	relayMode := relayconstant.Path2RelayMode(c.Request.URL.Path)
 	requestId := c.GetString(common.RequestIdKey)
 	group := c.GetString("group")
 	//wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01
@@ -240,7 +241,14 @@ func getChannel(c *gin.Context, group, originalModel string, retryCount int) (*m
 			AutoBan: &autoBanInt,
 		}, nil
 	}
-	channel, err := model.GetRandomSatisfiedChannel(group, originalModel, retryCount)
+	relayMode := relayconstant.Path2RelayMode(c.Request.URL.Path)
+	var channel *model.Channel
+	var err error
+	if relayMode == relayconstant.RelayModeResponses {
+		channel, err = model.GetRandomSatisfiedChannelByTypes(group, originalModel, retryCount, []int{common.ChannelTypeOpenAI})
+	} else {
+		channel, err = model.GetRandomSatisfiedChannel(group, originalModel, retryCount)
+	}
 	if err != nil {
 		return nil, errors.New(fmt.Sprintf("获取重试渠道失败: %s", err.Error()))
 	}

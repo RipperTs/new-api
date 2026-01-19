@@ -130,6 +130,44 @@ func GetRandomSatisfiedChannel(group string, model string, retry int) (*Channel,
 	return &channel, err
 }
 
+func GetRandomSatisfiedChannelByTypes(group string, model string, retry int, allowedTypes []int) (*Channel, error) {
+	if len(allowedTypes) == 0 {
+		return GetRandomSatisfiedChannel(group, model, retry)
+	}
+
+	var abilities []Ability
+
+	channelQuery := getChannelQuery(group, model, retry).
+		Model(&Ability{}).
+		Joins("JOIN channels ON channels.id = abilities.channel_id").
+		Where("channels.type IN ?", allowedTypes)
+
+	err := channelQuery.Order("weight DESC").Find(&abilities).Error
+	if err != nil {
+		return nil, err
+	}
+
+	channel := Channel{}
+	if len(abilities) > 0 {
+		weightSum := uint(0)
+		for _, ability_ := range abilities {
+			weightSum += ability_.Weight + 10
+		}
+		weight := common.GetRandomInt(int(weightSum))
+		for _, ability_ := range abilities {
+			weight -= int(ability_.Weight) + 10
+			if weight <= 0 {
+				channel.Id = ability_.ChannelId
+				break
+			}
+		}
+	} else {
+		return nil, errors.New("channel not found")
+	}
+	err = DB.First(&channel, "id = ?", channel.Id).Error
+	return &channel, err
+}
+
 func (channel *Channel) AddAbilities() error {
 	models_ := strings.Split(channel.Models, ",")
 	groups_ := strings.Split(channel.Group, ",")

@@ -96,7 +96,11 @@ func Distribute() func(c *gin.Context) {
 			}
 
 			if shouldSelectChannel {
-				channel, err = model.GetRandomSatisfiedChannel(userGroup, modelRequest.Model, 0)
+				if strings.HasPrefix(c.Request.URL.Path, "/v1/responses") {
+					channel, err = model.GetRandomSatisfiedChannelByTypes(userGroup, modelRequest.Model, 0, []int{common.ChannelTypeOpenAI})
+				} else {
+					channel, err = model.GetRandomSatisfiedChannel(userGroup, modelRequest.Model, 0)
+				}
 				if err != nil {
 					message := fmt.Sprintf("当前分组 %s 下对于模型 %s 无可用渠道", userGroup, modelRequest.Model)
 					// 如果错误，但是渠道不为空，说明是数据库一致性问题
