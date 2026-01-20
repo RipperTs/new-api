@@ -14,6 +14,7 @@ import (
 	"one-api/service"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-contrib/sessions"
@@ -155,6 +156,24 @@ func main() {
 	if port == "" {
 		port = strconv.Itoa(*common.Port)
 	}
+
+	// Codex OAuth 回调监听（默认 1455，与 CLIProxyAPI 一致）
+	// 仅用于承接 auth.openai.com 重定向到 http://localhost:1455/auth/callback
+	codexCallbackPort := strings.TrimSpace(os.Getenv("CODEX_OAUTH_CALLBACK_PORT"))
+	if codexCallbackPort == "" {
+		codexCallbackPort = "1455"
+	}
+	if codexCallbackPort != "0" && codexCallbackPort != port {
+		go func() {
+			err := http.ListenAndServe("0.0.0.0:"+codexCallbackPort, server)
+			if err != nil {
+				common.SysError("codex oauth callback server failed to start: " + err.Error())
+			} else {
+				common.SysLog("codex oauth callback server started on :" + codexCallbackPort)
+			}
+		}()
+	}
+
 	err = server.Run(":" + port)
 	if err != nil {
 		common.FatalLog("failed to start HTTP server: " + err.Error())

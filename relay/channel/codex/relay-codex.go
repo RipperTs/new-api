@@ -25,6 +25,7 @@ func codexStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.R
 	responseID := "chatcmpl-" + common.GetUUID()
 	model := info.UpstreamModelName
 	var responseText strings.Builder
+	var usage *dto.Usage
 
 	scanner := bufio.NewScanner(resp.Body)
 	// Codex 的 SSE 事件可能包含较长字段（如 reasoning.encrypted_content），提升扫描缓冲上限
@@ -63,6 +64,9 @@ func codexStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.R
 				return true
 			}
 			if payload == "[DONE]" {
+				if usage == nil {
+					usage, _ = service.ResponseText2Usage(responseText.String(), model, info.PromptTokens)
+				}
 				// 最后一块：finish
 				final := dto.ChatCompletionsStreamResponse{
 					Id:      responseID,
@@ -77,6 +81,9 @@ func codexStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.R
 				}
 				js, _ := json.Marshal(final)
 				_ = service.StringData(c, string(js))
+				if info.ShouldIncludeUsage && usage != nil {
+					_ = service.ObjectData(c, service.GenerateFinalUsageResponse(responseID, created, model, *usage))
+				}
 				service.Done(c)
 				return false
 			}
@@ -175,6 +182,12 @@ func codexStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.R
 			}
 			return true
 		case <-stopChan:
+			if usage == nil {
+				usage, _ = service.ResponseText2Usage(responseText.String(), model, info.PromptTokens)
+			}
+			if info.ShouldIncludeUsage && usage != nil {
+				_ = service.ObjectData(c, service.GenerateFinalUsageResponse(responseID, created, model, *usage))
+			}
 			service.Done(c)
 			return false
 		}
@@ -183,7 +196,9 @@ func codexStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.R
 	_ = resp.Body.Close()
 
 	// 计算 usage
-	usage, _ := service.ResponseText2Usage(responseText.String(), model, info.PromptTokens)
+	if usage == nil {
+		usage, _ = service.ResponseText2Usage(responseText.String(), model, info.PromptTokens)
+	}
 	return nil, usage
 }
 

@@ -107,6 +107,16 @@ func FetchUpstreamModels(c *gin.Context) {
 		})
 		return
 	}
+	if channel.Type == common.ChannelTypeCodex {
+		st := channel.GetSetting()
+		if m, ok := st["auth_mode"].(string); ok && strings.EqualFold(m, "oauth") {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "Codex Auth 模式暂不支持自动获取模型列表，请手动维护模型列表",
+			})
+			return
+		}
+	}
 
 	baseURL := common.ChannelBaseURLs[channel.Type]
 	if channel.GetBaseURL() != "" {
@@ -238,6 +248,47 @@ func AddChannel(c *gin.Context) {
 		return
 	}
 	channel.CreatedTime = common.GetTimestamp()
+	var codexSessionToken *service.CodexTokenData
+	codexSessionID := ""
+	if channel.Type == common.ChannelTypeCodex {
+		st := channel.GetSetting()
+		if m, ok := st["auth_mode"].(string); ok && strings.EqualFold(m, "oauth") {
+			if sid, ok := st["codex_oauth_session_id"].(string); ok && strings.TrimSpace(sid) != "" {
+				codexSessionID = strings.TrimSpace(sid)
+				td, err := service.CodexLoadOAuthSession(codexSessionID)
+				if err != nil {
+					c.JSON(http.StatusOK, gin.H{"success": false, "message": "Codex 授权信息已过期，请重新授权"})
+					return
+				}
+				if strings.TrimSpace(td.RefreshToken) == "" {
+					c.JSON(http.StatusOK, gin.H{"success": false, "message": "Codex 授权信息无效，请重新授权"})
+					return
+				}
+				codexSessionToken = td
+				channel.Key = td.RefreshToken
+				delete(st, "codex_oauth_session_id")
+				st["auth_mode"] = "oauth"
+				if strings.TrimSpace(td.Email) != "" {
+					st["codex_email"] = td.Email
+				}
+				if strings.TrimSpace(td.AccountID) != "" {
+					if v, ok := st["chatgpt_account_id"].(string); !ok || strings.TrimSpace(v) == "" {
+						st["chatgpt_account_id"] = td.AccountID
+					}
+				}
+				channel.SetSetting(st)
+				// 默认走官方 backend-api
+				if channel.GetBaseURL() == "" {
+					base := "https://chatgpt.com/backend-api"
+					channel.BaseURL = &base
+				}
+			} else {
+				c.JSON(http.StatusOK, gin.H{"success": false, "message": "请选择 Codex 授权方式后完成登录授权"})
+				return
+			}
+		}
+	}
+
 	keys := strings.Split(channel.Key, "\n")
 	if channel.Type == common.ChannelTypeVertexAi {
 		if channel.Other == "" {
@@ -261,6 +312,33 @@ func AddChannel(c *gin.Context) {
 		}
 		keys = []string{channel.Key}
 	}
+
+	// Codex OAuth 创建：仅创建单条（避免多 key 拆分，并确保能拿到 channel_id 做缓存绑定）
+	if channel.Type == common.ChannelTypeCodex && codexSessionToken != nil {
+		// Validate the length of the model name
+		models := strings.Split(channel.Models, ",")
+		for _, model := range models {
+			if len(model) > 255 {
+				c.JSON(http.StatusOK, gin.H{
+					"success": false,
+					"message": fmt.Sprintf("模型名称过长: %s", model),
+				})
+				return
+			}
+		}
+		if err := channel.Insert(); err != nil {
+			c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
+			return
+		}
+		_ = service.CodexCacheChannelToken(channel.Id, codexSessionToken)
+		// session_id 由前端随 setting 传入，这里不再保留
+		if codexSessionID != "" {
+			service.CodexDeleteOAuthSession(codexSessionID)
+		}
+		c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
+		return
+	}
+
 	channels := make([]model.Channel, 0, len(keys))
 	for _, key := range keys {
 		if key == "" {

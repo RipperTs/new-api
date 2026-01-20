@@ -64,6 +64,7 @@ func GenRelayInfo(c *gin.Context) *RelayInfo {
 	channelId := c.GetInt("channel_id")
 	channelSetting := c.GetStringMap("channel_setting")
 
+	channelBaseURL := c.GetString("base_url")
 	tokenId := c.GetInt("token_id")
 	tokenKey := c.GetString("token_key")
 	userId := c.GetInt("id")
@@ -76,7 +77,7 @@ func GenRelayInfo(c *gin.Context) *RelayInfo {
 
 	info := &RelayInfo{
 		RelayMode:         relayconstant.Path2RelayMode(c.Request.URL.Path),
-		BaseUrl:           c.GetString("base_url"),
+		BaseUrl:           channelBaseURL,
 		ProxyURL:          c.GetString("proxy_url"),
 		RequestURLPath:    c.Request.URL.String(),
 		ChannelType:       channelType,
@@ -103,6 +104,14 @@ func GenRelayInfo(c *gin.Context) *RelayInfo {
 	}
 	if info.BaseUrl == "" {
 		info.BaseUrl = common.ChannelBaseURLs[channelType]
+	}
+	// Codex OAuth 登录模式：未显式配置 base_url 时，默认走官方 backend-api（避免误用镜像站默认地址）
+	if channelType == common.ChannelTypeCodex {
+		if m, ok := channelSetting["auth_mode"].(string); ok && strings.EqualFold(m, "oauth") {
+			if channelBaseURL == "" {
+				info.BaseUrl = "https://chatgpt.com/backend-api"
+			}
+		}
 	}
 	if info.ChannelType == common.ChannelTypeAzure {
 		info.ApiVersion = GetAPIVersion(c)

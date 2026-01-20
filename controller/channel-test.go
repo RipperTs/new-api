@@ -56,6 +56,17 @@ func testChannel(channel *model.Channel, testModel string) (err error, openAIErr
 		}
 	}
 
+	// Codex（OAuth）优先挑选更可能可用的模型，避免默认 gpt-3.5 导致上游 400
+	if channel.Type == common.ChannelTypeCodex {
+		if st := channel.GetSetting(); st != nil {
+			if m, ok := st["auth_mode"].(string); ok && strings.EqualFold(m, "oauth") {
+				if testModel == "" || strings.Contains(strings.ToLower(testModel), "3.5") {
+					testModel = pickCodexOAuthTestModel(channel.GetModels())
+				}
+			}
+		}
+	}
+
 	// 判断是否为 Embedding 模型
 	if isEmbeddingModel(testModel) {
 		requestPath = "/v1/embeddings"
@@ -70,7 +81,7 @@ func testChannel(channel *model.Channel, testModel string) (err error, openAIErr
 
 	// 如果指定了testModel，处理模型映射
 	if testModel != "" {
-		modelMapping := *channel.ModelMapping
+		modelMapping := channel.GetModelMapping()
 		if modelMapping != "" && modelMapping != "{}" {
 			modelMap := make(map[string]string)
 			err := json.Unmarshal([]byte(modelMapping), &modelMap)
@@ -108,6 +119,9 @@ func testChannel(channel *model.Channel, testModel string) (err error, openAIErr
 	if err != nil {
 		return err, nil
 	}
+	if u, err := adaptor.GetRequestURL(meta); err == nil {
+		common.SysLog(fmt.Sprintf("testing channel %d upstream url: %s", channel.Id, u))
+	}
 	jsonData, err := json.Marshal(convertedRequest)
 	if err != nil {
 		return err, nil
@@ -122,8 +136,20 @@ func testChannel(channel *model.Channel, testModel string) (err error, openAIErr
 	if resp != nil {
 		httpResp = resp.(*http.Response)
 		if httpResp.StatusCode != http.StatusOK {
-			err := service.RelayErrorHandler(httpResp)
-			return fmt.Errorf("status code %d: %s", httpResp.StatusCode, err.Error.Message), err
+			raw, _ := io.ReadAll(httpResp.Body)
+			_ = httpResp.Body.Close()
+			msg := parseUpstreamTestErrorMessage(raw)
+			if msg == "" {
+				msg = fmt.Sprintf("bad response status code %d", httpResp.StatusCode)
+			}
+			return fmt.Errorf("status code %d: %s", httpResp.StatusCode, msg), &dto.OpenAIErrorWithStatusCode{
+				StatusCode: httpResp.StatusCode,
+				Error: dto.OpenAIError{
+					Message: msg,
+					Type:    "upstream_error",
+					Code:    "bad_response_status_code",
+				},
+			}
 		}
 	}
 	usageA, respErr := adaptor.DoResponse(c, httpResp, meta)
@@ -161,6 +187,56 @@ func testChannel(channel *model.Channel, testModel string) (err error, openAIErr
 		quota, "模型测试", 0, quota, int(consumedTime), false, "default", other)
 	common.SysLog(fmt.Sprintf("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
 	return nil, nil
+}
+
+func pickCodexOAuthTestModel(models []string) string {
+	if len(models) == 0 {
+		return "gpt-4o"
+	}
+	prefer := []string{
+		"gpt-5-codex",
+		"gpt-5",
+		"gpt-4o",
+		"gpt-4",
+		"gpt-4o-mini",
+		"gpt-4.1",
+		"gpt-4.1-mini",
+	}
+	for _, p := range prefer {
+		for _, m := range models {
+			if m == p || strings.HasPrefix(m, p+"-") {
+				return m
+			}
+		}
+	}
+	for _, m := range models {
+		if strings.HasPrefix(m, "gpt-") && !strings.Contains(m, "3.5") {
+			return m
+		}
+	}
+	return models[0]
+}
+
+func parseUpstreamTestErrorMessage(raw []byte) string {
+	b := bytes.TrimSpace(raw)
+	if len(b) == 0 {
+		return ""
+	}
+	var errResp dto.GeneralErrorResponse
+	if json.Unmarshal(b, &errResp) == nil {
+		if errResp.Error.Message != "" {
+			return errResp.Error.Message
+		}
+		if msg := strings.TrimSpace(errResp.ToMessage()); msg != "" {
+			return msg
+		}
+	}
+	// 兜底：返回原始字符串（截断，避免太长）
+	s := strings.TrimSpace(string(b))
+	if len(s) > 300 {
+		return s[:300]
+	}
+	return s
 }
 
 // isEmbeddingModel 判断是否为 Embedding 模型

@@ -25,7 +25,6 @@ import {
   Banner
 } from '@douyinfe/semi-ui';
 import { getChannelModels, loadChannelModels } from '../../components/utils.js';
-import axios from 'axios';
 
 const MODEL_MAPPING_EXAMPLE = {
   'gpt-3.5-turbo': 'gpt-3.5-turbo-0125'
@@ -41,6 +40,7 @@ const REGION_EXAMPLE = {
 };
 
 const fetchButtonTips = '1. 新建渠道时，请求通过当前浏览器发出；2. 编辑已有渠道，请求通过后端服务器发出';
+const CODEX_OFFICIAL_BASE_URL = 'https://chatgpt.com/backend-api';
 
 function type2secretPrompt(type) {
   // inputs.type === 15 ? '按照如下格式输入：APIKey|SecretKey' : (inputs.type === 18 ? '按照如下格式输入：APPID|APISecret|APIKey' : '请输入渠道对应的鉴权密钥')
@@ -59,6 +59,19 @@ function type2secretPrompt(type) {
       return '请输入 Codex 的鉴权秘钥 (非Access Token)';
     default:
       return '请输入渠道对应的鉴权密钥';
+  }
+}
+
+function safeParseJSON(str) {
+  if (!str || typeof str !== 'string') return {};
+  const s = str.trim();
+  if (!s) return {};
+  try {
+    const obj = JSON.parse(s);
+    if (obj && typeof obj === 'object' && !Array.isArray(obj)) return obj;
+    return {};
+  } catch (e) {
+    return {};
   }
 }
 
@@ -88,7 +101,8 @@ const EditChannel = (props) => {
     priority: 0,
     weight: 0,
     tag: '',
-    proxy_url: ''
+    proxy_url: '',
+    setting: ''
   };
   const [batch, setBatch] = useState(false);
   const [autoBan, setAutoBan] = useState(true);
@@ -102,6 +116,8 @@ const EditChannel = (props) => {
   const [customModel, setCustomModel] = useState('');
   // 模型重定向行编辑：[{ from: string, to: string }]
   const [modelMappingRows, setModelMappingRows] = useState([]);
+  const [codexAuthStatus, setCodexAuthStatus] = useState(null);
+  const [codexAuthLoading, setCodexAuthLoading] = useState(false);
 
   // 工具：JSON字符串 -> 行
   const parseModelMappingToRows = (jsonStr) => {
@@ -253,6 +269,108 @@ const EditChannel = (props) => {
     setLoading(false);
   };
 
+  const getCodexSetting = () => safeParseJSON(inputs.setting);
+  const getCodexAuthMode = () => {
+    const s = getCodexSetting();
+    return s.auth_mode === 'oauth' ? 'oauth' : 'api_key';
+  };
+  const getCodexSessionId = () => {
+    const s = getCodexSetting();
+    return s.codex_oauth_session_id || '';
+  };
+  const applyCodexAuthMode = (mode) => {
+    setInputs((prev) => {
+      const s = safeParseJSON(prev.setting);
+      const next = { ...s };
+      if (mode === 'oauth') {
+        next.auth_mode = 'oauth';
+        return {
+          ...prev,
+          base_url: CODEX_OFFICIAL_BASE_URL,
+          setting: JSON.stringify(next, null, 2)
+        };
+      }
+      next.auth_mode = 'api_key';
+      delete next.codex_oauth_session_id;
+      delete next.codex_email;
+      return { ...prev, setting: JSON.stringify(next, null, 2) };
+    });
+    if (mode !== 'oauth') {
+      setCodexAuthStatus(null);
+    }
+  };
+
+  const refreshCodexAuthStatus = async () => {
+    if (inputs.type !== 45) return;
+    const mode = getCodexAuthMode();
+    if (mode !== 'oauth') {
+      setCodexAuthStatus(null);
+      return;
+    }
+    setCodexAuthLoading(true);
+    try {
+      if (isEdit) {
+        const res = await API.get(`/api/channel/${channelId}/codex_auth/status`);
+        if (res?.data?.success) setCodexAuthStatus(res.data.data);
+      } else {
+        const sid = getCodexSessionId();
+        if (!sid) {
+          setCodexAuthStatus(null);
+        } else {
+          const res = await API.get(`/api/channel/codex_auth/session/${sid}`);
+          if (res?.data?.success) setCodexAuthStatus(res.data.data);
+        }
+      }
+    } catch (e) {
+      // ignore
+    } finally {
+      setCodexAuthLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (inputs.type === 45 && getCodexAuthMode() === 'oauth') {
+      refreshCodexAuthStatus().then();
+    }
+  }, [inputs.type, inputs.setting, isEdit]);
+
+  const startCodexOAuth = async () => {
+    setCodexAuthLoading(true);
+    try {
+      const res = await API.post('/api/channel/codex_auth/start', {
+        channel_id: isEdit ? parseInt(channelId) : 0,
+        proxy_url: inputs.proxy_url || ''
+      });
+      if (!res?.data?.success) {
+        showError(res?.data?.message || '启动 Codex 授权失败');
+        return;
+      }
+      const { auth_url, session_id } = res.data.data || {};
+      if (!auth_url || !session_id) {
+        showError('启动 Codex 授权失败');
+        return;
+      }
+      if (!isEdit) {
+        setInputs((prev) => {
+          const s = safeParseJSON(prev.setting);
+          const next = {
+            ...s,
+            auth_mode: 'oauth',
+            codex_oauth_session_id: session_id
+          };
+          return {
+            ...prev,
+            base_url: CODEX_OFFICIAL_BASE_URL,
+            setting: JSON.stringify(next, null, 2)
+          };
+        });
+      }
+      window.open(auth_url, '_blank', 'noopener,noreferrer');
+    } finally {
+      setCodexAuthLoading(false);
+    }
+  };
+
 
   const fetchUpstreamModelList = async (name) => {
     // if (inputs['type'] !== 1) {
@@ -273,7 +391,10 @@ const EditChannel = (props) => {
       }
     } else {
       // 如果是新建模式，通过后端代理获取模型列表
-      if (!inputs?.['key']) {
+      if (inputs.type === 45 && getCodexAuthMode() === 'oauth') {
+        showError(t('Codex Auth 模式下暂不支持自动拉取模型列表，请手动选择'));
+        err = true;
+      } else if (!inputs?.['key']) {
         showError(t('请填写密钥'));
         err = true;
       } else {
@@ -370,8 +491,57 @@ const EditChannel = (props) => {
     }
   }, [props.editingChannel.id]);
 
+  useEffect(() => {
+    const handler = async (event) => {
+      if (!event?.data || event.data.type !== 'CODEX_OAUTH_DONE') return;
+      if (inputs.type !== 45) return;
+      const { session_id, bound } = event.data || {};
+      if (isEdit) {
+        if (!bound && session_id) {
+          await API.post(`/api/channel/${channelId}/codex_auth/bind`, { session_id });
+        }
+        await loadChannel();
+      } else if (session_id) {
+        setInputs((prev) => {
+          const s = safeParseJSON(prev.setting);
+          const next = {
+            ...s,
+            auth_mode: 'oauth',
+            codex_oauth_session_id: session_id
+          };
+          return {
+            ...prev,
+            base_url: CODEX_OFFICIAL_BASE_URL,
+            setting: JSON.stringify(next, null, 2)
+          };
+        });
+      }
+      await refreshCodexAuthStatus();
+      showSuccess('Codex 授权完成');
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, [inputs.type, isEdit, channelId, inputs.setting]);
+
   const submit = async () => {
-    if (!isEdit && (inputs.name === '' || inputs.key === '')) {
+    const codexMode = inputs.type === 45 ? getCodexAuthMode() : 'api_key';
+    if (!isEdit && inputs.name === '') {
+      showInfo(t('请填写渠道名称！'));
+      return;
+    }
+    if (isEdit && inputs.type === 45 && codexMode === 'oauth') {
+      if (!codexAuthStatus || !codexAuthStatus.has_refresh) {
+        showInfo(t('请先完成 Codex 授权登录并绑定渠道！'));
+        return;
+      }
+    }
+    if (!isEdit && inputs.type === 45 && codexMode === 'oauth') {
+      const sid = getCodexSessionId();
+      if (!sid) {
+        showInfo(t('请先完成 Codex 授权登录！'));
+        return;
+      }
+    } else if (!isEdit && inputs.key === '') {
       showInfo(t('请填写渠道名称和渠道密钥！'));
       return;
     }
@@ -566,13 +736,80 @@ const EditChannel = (props) => {
           )}
           {inputs.type !== 3 && inputs.type !== 8 && inputs.type !== 22 && inputs.type !== 36 && (
             <>
+              {inputs.type === 45 && (
+                <>
+                  <div style={{ marginTop: 10 }}>
+                    <Typography.Text strong>{t('Codex 认证方式')}：</Typography.Text>
+                  </div>
+                  <Select
+                    style={{ width: '50%' }}
+                    value={getCodexAuthMode()}
+                    optionList={[
+                      { label: t('秘钥（镜像站/自建）'), value: 'api_key' },
+                      { label: t('Auth 登录（官方）'), value: 'oauth' }
+                    ]}
+                    onChange={(v) => {
+                      applyCodexAuthMode(v);
+                    }}
+                  />
+                  {getCodexAuthMode() === 'oauth' && (
+                    <div style={{ marginTop: 10 }}>
+                      <Banner
+                        type="warning"
+                        style={{ marginBottom: 10 }}
+                        description={t('如遇到 “Country, region, or territory not supported”，请在「代理URL」填写可用地区的代理后再授权')}
+                      />
+                      <Space>
+                        <Button
+                          type="primary"
+                          loading={codexAuthLoading}
+                          onClick={startCodexOAuth}
+                        >
+                          {isEdit ? t('授权登录并绑定') : t('开始授权登录')}
+                        </Button>
+                        <Button loading={codexAuthLoading} onClick={refreshCodexAuthStatus}>
+                          {t('刷新状态')}
+                        </Button>
+                      </Space>
+                      {codexAuthStatus && (
+                        <Banner
+                          style={{ marginTop: 10 }}
+                          type="success"
+                          description={
+                            <>
+                              <div>{t('授权信息已获取')}</div>
+                              {codexAuthStatus.email && (
+                                <div>
+                                  {t('邮箱')}: {codexAuthStatus.email}
+                                </div>
+                              )}
+                              {codexAuthStatus.account_id && (
+                                <div>
+                                  {t('AccountId')}: {codexAuthStatus.account_id}
+                                </div>
+                              )}
+                            </>
+                          }
+                        />
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
               <div style={{ marginTop: 10 }}>
                 <Typography.Text strong>{t('请求地址')}：</Typography.Text>
               </div>
               <Input
                 label={t('请求地址')}
                 name="base_url"
-                placeholder={inputs.type === 45 ? '填入 Codex 镜像站接口地址, 通常以 /v1 结尾' :t('此项可选，用于通过代理站来进行 API 调用')}
+                placeholder={
+                  inputs.type === 45 && getCodexAuthMode() === 'oauth'
+                    ? t('已自动填写官方请求地址')
+                    : inputs.type === 45
+                    ? '填入 Codex 镜像站接口地址, 通常以 /v1 结尾'
+                    : t('此项可选，用于通过代理站来进行 API 调用')
+                }
+                disabled={inputs.type === 45 && getCodexAuthMode() === 'oauth'}
                 onChange={(value) => {
                   handleInputChange('base_url', value);
                 }}
@@ -867,7 +1104,16 @@ const EditChannel = (props) => {
           <div style={{ marginTop: 10 }}>
             <Typography.Text strong>{t('密钥')}：</Typography.Text>
           </div>
-          {batch ? (
+          {inputs.type === 45 && getCodexAuthMode() === 'oauth' ? (
+            <Input
+              label={t('密钥')}
+              name="key"
+              disabled
+              placeholder={t('Auth 模式无需填写密钥，授权后自动保存')}
+              value=""
+              autoComplete="new-password"
+            />
+          ) : batch ? (
             <TextArea
               label={t('密钥')}
               name="key"
@@ -929,6 +1175,7 @@ const EditChannel = (props) => {
                   checked={batch}
                   label={t('批量创建')}
                   name="batch"
+                  disabled={inputs.type === 45 && getCodexAuthMode() === 'oauth'}
                   onChange={() => setBatch(!batch)}
                 />
                 <Typography.Text strong>{t('批量创建')}</Typography.Text>

@@ -69,16 +69,26 @@ func RelayErrorHandler(resp *http.Response) (errWithStatusCode *dto.OpenAIErrorW
 	}
 	var errResponse dto.GeneralErrorResponse
 	err = json.Unmarshal(responseBody, &errResponse)
-	if err != nil {
-		return
+	if err == nil {
+		if errResponse.Error.Message != "" {
+			// OpenAI format error, so we override the default one
+			errWithStatusCode.Error = errResponse.Error
+		} else {
+			errWithStatusCode.Error.Message = errResponse.ToMessage()
+		}
 	}
-	if errResponse.Error.Message != "" {
-		// OpenAI format error, so we override the default one
-		errWithStatusCode.Error = errResponse.Error
-	} else {
-		errWithStatusCode.Error.Message = errResponse.ToMessage()
+
+	// fallback：无法解析标准 error 时，尽量把上游原始 body 带出来，方便定位（截断避免过长）
+	if strings.TrimSpace(errWithStatusCode.Error.Message) == "" {
+		msg := strings.TrimSpace(string(responseBody))
+		if msg != "" {
+			if len(msg) > 500 {
+				msg = msg[:500]
+			}
+			errWithStatusCode.Error.Message = msg
+		}
 	}
-	if errWithStatusCode.Error.Message == "" {
+	if strings.TrimSpace(errWithStatusCode.Error.Message) == "" {
 		errWithStatusCode.Error.Message = fmt.Sprintf("bad response status code %d", resp.StatusCode)
 	}
 	return

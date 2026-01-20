@@ -9,6 +9,9 @@ import (
 )
 
 func SetApiRouter(router *gin.Engine) {
+	// Codex OAuth 本机回调（CLIProxyAPI 同款路径）
+	router.GET("/auth/callback", controller.CodexAuthCallback)
+
 	apiRouter := router.Group("/api")
 	apiRouter.Use(gzip.Gzip(gzip.DefaultCompression))
 	{
@@ -31,6 +34,9 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.GET("/oauth/email/bind", middleware.CriticalRateLimit(), controller.EmailBind)
 		apiRouter.GET("/oauth/telegram/login", middleware.CriticalRateLimit(), controller.TelegramLogin)
 		apiRouter.GET("/oauth/telegram/bind", middleware.CriticalRateLimit(), controller.TelegramBind)
+
+		// Codex OAuth 回调（兼容旧前端路径，不加鉴权，依赖 state 校验）
+		apiRouter.GET("/channel/codex_auth/callback", controller.CodexAuthCallback)
 
 		userRoute := apiRouter.Group("/user")
 		{
@@ -79,6 +85,12 @@ func SetApiRouter(router *gin.Engine) {
 		channelRoute := apiRouter.Group("/channel")
 		channelRoute.Use(middleware.AdminAuth())
 		{
+			// Codex OAuth 授权（仅用于 Codex 渠道）
+			channelRoute.POST("/codex_auth/start", controller.CodexAuthStart)
+			channelRoute.GET("/codex_auth/session/:session_id", controller.CodexAuthGetSession)
+			channelRoute.POST("/:id/codex_auth/bind", controller.CodexAuthBind)
+			channelRoute.GET("/:id/codex_auth/status", controller.CodexAuthStatus)
+
 			channelRoute.GET("/", controller.GetAllChannels)
 			channelRoute.GET("/search", controller.SearchChannels)
 			channelRoute.GET("/models", controller.ChannelListModels)
