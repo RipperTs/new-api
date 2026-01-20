@@ -50,7 +50,13 @@ func CodexCLIHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) {
 
 	// chatgpt backend-api 的 Codex 接口不支持部分参数（参照 CLIProxyAPI）
 	base := strings.TrimRight(strings.TrimSpace(relayInfo.BaseUrl), "/")
-	if !strings.HasSuffix(base, "/v1") {
+	// 经验：API Key（秘钥）模式的上游通常也不支持这些参数（例如会报 Unsupported parameter: temperature），
+	// 为了与 OAuth 行为一致并减少 400，这里统一过滤。
+	isOAuth := false
+	if m, ok := relayInfo.ChannelSetting["auth_mode"].(string); ok && strings.EqualFold(m, "oauth") {
+		isOAuth = true
+	}
+	if !strings.HasSuffix(base, "/v1") || !isOAuth {
 		delete(requestMap, "max_output_tokens")
 		delete(requestMap, "temperature")
 		delete(requestMap, "top_p")

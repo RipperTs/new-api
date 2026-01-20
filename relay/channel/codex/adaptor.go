@@ -162,6 +162,12 @@ func (a *Adaptor) ConvertRequest(c *gin.Context, info *relaycommon.RelayInfo, re
 		base = strings.TrimRight(strings.TrimSpace(info.BaseUrl), "/")
 	}
 	isV1Upstream := strings.HasSuffix(base, "/v1")
+	isOAuth := false
+	if info != nil {
+		if m, ok := info.ChannelSetting["auth_mode"].(string); ok && strings.EqualFold(m, "oauth") {
+			isOAuth = true
+		}
+	}
 
 	// 对齐 CLIProxyAPI：instructions 始终存在，但 system 消息作为 role=developer 的 message 写入 input
 	instructions := ""
@@ -276,7 +282,8 @@ func (a *Adaptor) ConvertRequest(c *gin.Context, info *relaycommon.RelayInfo, re
 
 	// Codex 要求始终使用流式返回，上游会按 SSE 返回；非流式在 DoResponse 聚合
 	var maxOut uint = 0
-	if isV1Upstream {
+	// 与可选参数同策略：仅 OAuth + /v1 上游才透传 max_output_tokens，避免镜像站参数不兼容导致 400。
+	if isV1Upstream && isOAuth {
 		maxOut = req.MaxCompletionTokens
 		if maxOut == 0 {
 			maxOut = req.MaxTokens
@@ -290,7 +297,9 @@ func (a *Adaptor) ConvertRequest(c *gin.Context, info *relaycommon.RelayInfo, re
 	var temperature *float64
 	var topP float64
 	var seed float64
-	if isV1Upstream {
+	// 经验：API Key 模式的 Codex 上游（尤其镜像站）对参数兼容性不一，容易出现 Unsupported parameter，
+	// 这里对齐 OAuth 行为：仅 OAuth + /v1 上游才透传这些可选参数。
+	if isV1Upstream && isOAuth {
 		temperature = req.Temperature
 		topP = req.TopP
 		seed = req.Seed
