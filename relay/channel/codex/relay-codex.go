@@ -27,7 +27,62 @@ func codexStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.R
 	var responseText strings.Builder
 	var usage *dto.Usage
 
-	scanner := bufio.NewScanner(resp.Body)
+	// 某些上游（尤其是网关/代理）可能返回 JSON（非 SSE），或不正确标注 Content-Type。
+	// 如果不是 SSE，则将整体结果包装成 SSE（至少保证客户端能按 stream=true 消费）。
+	reader := bufio.NewReaderSize(resp.Body, 1024*1024)
+	if !looksLikeSSE(resp, reader) {
+		raw, err := io.ReadAll(reader)
+		_ = resp.Body.Close()
+		if err != nil {
+			return service.OpenAIErrorWrapper(err, "read_response_failed", http.StatusInternalServerError), nil
+		}
+
+		service.SetEventStreamHeaders(c)
+		info.SetFirstResponseTime()
+
+		text := extractTextFromBody(raw)
+		if strings.TrimSpace(text) != "" {
+			responseText.WriteString(text)
+			chunk := dto.ChatCompletionsStreamResponse{
+				Id:      responseID,
+				Object:  "chat.completion.chunk",
+				Created: created,
+				Model:   model,
+				Choices: []dto.ChatCompletionsStreamResponseChoice{{
+					Index: 0,
+					Delta: func() dto.ChatCompletionsStreamResponseChoiceDelta {
+						d := dto.ChatCompletionsStreamResponseChoiceDelta{Role: "assistant"}
+						d.SetContentString(text)
+						return d
+					}(),
+				}},
+			}
+			js, _ := json.Marshal(chunk)
+			_ = service.StringData(c, string(js))
+		}
+
+		usage, _ = service.ResponseText2Usage(responseText.String(), model, info.PromptTokens)
+		final := dto.ChatCompletionsStreamResponse{
+			Id:      responseID,
+			Object:  "chat.completion.chunk",
+			Created: created,
+			Model:   model,
+			Choices: []dto.ChatCompletionsStreamResponseChoice{{
+				Index:        0,
+				Delta:        dto.ChatCompletionsStreamResponseChoiceDelta{},
+				FinishReason: &constant.FinishReasonStop,
+			}},
+		}
+		finalJS, _ := json.Marshal(final)
+		_ = service.StringData(c, string(finalJS))
+		if info.ShouldIncludeUsage && usage != nil {
+			_ = service.ObjectData(c, service.GenerateFinalUsageResponse(responseID, created, model, *usage))
+		}
+		service.Done(c)
+		return nil, usage
+	}
+
+	scanner := bufio.NewScanner(reader)
 	// Codex 的 SSE 事件可能包含较长字段（如 reasoning.encrypted_content），提升扫描缓冲上限
 	buf := make([]byte, 0, 1024*1024)
 	scanner.Buffer(buf, 8*1024*1024)

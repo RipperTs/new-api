@@ -205,7 +205,10 @@ func TextHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) {
 		httpResp = resp.(*http.Response)
 		// 仅当客户端请求了 stream 时，才根据上游响应头确认是否继续走流式
 		if relayInfo.IsStream {
-			relayInfo.IsStream = strings.HasPrefix(httpResp.Header.Get("Content-Type"), "text/event-stream")
+			// Codex 上游偶尔不会正确标注 Content-Type，但 body 仍是 SSE；这里不强行降级为非流式，交由 Codex handler 自行判定。
+			if relayInfo.ChannelType != common.ChannelTypeCodex {
+				relayInfo.IsStream = strings.HasPrefix(httpResp.Header.Get("Content-Type"), "text/event-stream")
+			}
 		}
 		if httpResp.StatusCode != http.StatusOK {
 			openaiErr = service.RelayErrorHandler(httpResp)
