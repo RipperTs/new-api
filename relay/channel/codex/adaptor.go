@@ -36,22 +36,34 @@ type codexTool struct {
 	Parameters  any    `json:"parameters,omitempty"`
 }
 
+type codexTextFormat struct {
+	Type   string `json:"type,omitempty"`
+	Name   string `json:"name,omitempty"`
+	Strict any    `json:"strict,omitempty"`
+	Schema any    `json:"schema,omitempty"`
+}
+
+type codexText struct {
+	Format *codexTextFormat `json:"format,omitempty"`
+}
+
 type codexRequest struct {
-	Model             string              `json:"model"`
-	Instructions      string              `json:"instructions"`
-	Input             []any               `json:"input"`
-	Tools             []codexTool         `json:"tools,omitempty"`
-	ToolChoice        any                 `json:"tool_choice,omitempty"`
-	ParallelToolCalls bool                `json:"parallel_tool_calls,omitempty"`
-	Store             bool                `json:"store,omitempty"`
-	Stream            bool                `json:"stream,omitempty"`
-	Include           []string            `json:"include,omitempty"`
-	Reasoning         map[string]any      `json:"reasoning,omitempty"`
-	MaxOutputTokens   uint                `json:"max_output_tokens,omitempty"`
-	Temperature       *float64            `json:"temperature,omitempty"`
-	TopP              float64             `json:"top_p,omitempty"`
-	Seed              float64             `json:"seed,omitempty"`
-	ResponseFormat    *dto.ResponseFormat `json:"response_format,omitempty"`
+	Model             string      `json:"model"`
+	Instructions      string      `json:"instructions"`
+	Input             []any       `json:"input"`
+	Tools             []codexTool `json:"tools,omitempty"`
+	ToolChoice        any         `json:"tool_choice,omitempty"`
+	ParallelToolCalls bool        `json:"parallel_tool_calls,omitempty"`
+	// Codex 上游要求显式传 store=false（若省略会报 “Store must be set to false”）
+	Store           bool           `json:"store"`
+	Stream          bool           `json:"stream,omitempty"`
+	Include         []string       `json:"include,omitempty"`
+	Reasoning       map[string]any `json:"reasoning,omitempty"`
+	MaxOutputTokens uint           `json:"max_output_tokens,omitempty"`
+	Temperature     *float64       `json:"temperature,omitempty"`
+	TopP            float64        `json:"top_p,omitempty"`
+	Seed            float64        `json:"seed,omitempty"`
+	Text            *codexText     `json:"text,omitempty"`
 }
 
 type Adaptor struct{}
@@ -144,6 +156,12 @@ func (a *Adaptor) ConvertRequest(c *gin.Context, info *relaycommon.RelayInfo, re
 	if req == nil {
 		return nil, errors.New("request is nil")
 	}
+
+	base := ""
+	if info != nil {
+		base = strings.TrimRight(strings.TrimSpace(info.BaseUrl), "/")
+	}
+	isV1Upstream := strings.HasSuffix(base, "/v1")
 
 	// 对齐 CLIProxyAPI：instructions 始终存在，但 system 消息作为 role=developer 的 message 写入 input
 	instructions := ""
@@ -257,9 +275,25 @@ func (a *Adaptor) ConvertRequest(c *gin.Context, info *relaycommon.RelayInfo, re
 	}
 
 	// Codex 要求始终使用流式返回，上游会按 SSE 返回；非流式在 DoResponse 聚合
-	maxOut := req.MaxCompletionTokens
-	if maxOut == 0 {
-		maxOut = req.MaxTokens
+	var maxOut uint = 0
+	if isV1Upstream {
+		maxOut = req.MaxCompletionTokens
+		if maxOut == 0 {
+			maxOut = req.MaxTokens
+		}
+	}
+
+	// response_format -> Responses API: text.format
+	text := convertResponseFormatToCodexText(req.ResponseFormat)
+
+	// 官方 chatgpt backend-api 的 Codex 接口对部分参数比较严格（参照 CLIProxyAPI），这里避免传入不支持字段
+	var temperature *float64
+	var topP float64
+	var seed float64
+	if isV1Upstream {
+		temperature = req.Temperature
+		topP = req.TopP
+		seed = req.Seed
 	}
 	body := codexRequest{
 		Model:             req.Model,
@@ -273,12 +307,40 @@ func (a *Adaptor) ConvertRequest(c *gin.Context, info *relaycommon.RelayInfo, re
 		Include:           include,
 		Reasoning:         reasoning,
 		MaxOutputTokens:   maxOut,
-		Temperature:       req.Temperature,
-		TopP:              req.TopP,
-		Seed:              req.Seed,
-		ResponseFormat:    req.ResponseFormat,
+		Temperature:       temperature,
+		TopP:              topP,
+		Seed:              seed,
+		Text:              text,
 	}
 	return body, nil
+}
+
+func convertResponseFormatToCodexText(rf *dto.ResponseFormat) *codexText {
+	if rf == nil {
+		return nil
+	}
+	switch strings.TrimSpace(rf.Type) {
+	case "text":
+		return &codexText{
+			Format: &codexTextFormat{Type: "text"},
+		}
+	case "json_schema":
+		if rf.JsonSchema == nil {
+			return &codexText{
+				Format: &codexTextFormat{Type: "json_schema"},
+			}
+		}
+		return &codexText{
+			Format: &codexTextFormat{
+				Type:   "json_schema",
+				Name:   rf.JsonSchema.Name,
+				Strict: rf.JsonSchema.Strict,
+				Schema: rf.JsonSchema.Schema,
+			},
+		}
+	default:
+		return nil
+	}
 }
 
 func convertChatMessageContentToCodex(m dto.Message, role string) ([]any, error) {

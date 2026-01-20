@@ -45,6 +45,18 @@ func CodexCLIHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) {
 	if _, ok := requestMap["stream"]; !ok {
 		requestMap["stream"] = true
 	}
+	// Codex 上游要求显式传 store=false（若省略会报 “Store must be set to false”）
+	requestMap["store"] = false
+
+	// chatgpt backend-api 的 Codex 接口不支持部分参数（参照 CLIProxyAPI）
+	base := strings.TrimRight(strings.TrimSpace(relayInfo.BaseUrl), "/")
+	if !strings.HasSuffix(base, "/v1") {
+		delete(requestMap, "max_output_tokens")
+		delete(requestMap, "temperature")
+		delete(requestMap, "top_p")
+		delete(requestMap, "top_k")
+		delete(requestMap, "seed")
+	}
 	stream, _ := requestMap["stream"].(bool)
 	relayInfo.IsStream = stream
 
