@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"net/http"
+	"net/url"
 	"one-api/common"
 	"one-api/model"
 	"one-api/service"
@@ -74,6 +75,51 @@ func CodexAuthStart(c *gin.Context) {
 	})
 }
 
+type codexAuthCompleteReq struct {
+	CallbackURL string `json:"callback_url"`
+	Code        string `json:"code"`
+	State       string `json:"state"`
+}
+
+// CodexAuthComplete 用于“手动粘贴回调 URL”完成授权：
+// 用户在浏览器登录后会跳转到 localhost 回调地址（线上服务无法接收），复制该 URL 粘贴到此接口完成 code exchange。
+func CodexAuthComplete(c *gin.Context) {
+	var req codexAuthCompleteReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "invalid request"})
+		return
+	}
+
+	code := strings.TrimSpace(req.Code)
+	state := strings.TrimSpace(req.State)
+	if code == "" || state == "" {
+		code, state = extractCodeStateFromCallbackInput(req.CallbackURL)
+	}
+	if code == "" || state == "" {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "missing code/state，请粘贴完整回调 URL（包含 code 和 state）"})
+		return
+	}
+
+	sessionID, channelID, bound, td, err := finalizeCodexOAuth(c, code, state)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data": gin.H{
+			"session_id": sessionID,
+			"channel_id": channelID,
+			"bound":      bound,
+			"account_id": td.AccountID,
+			"email":      td.Email,
+			"expires_at": td.ExpiresAt,
+		},
+	})
+}
+
 // CodexAuthCallback OAuth 回调：用 code 换 token，写入 Redis session（以及可选直接绑定到渠道）
 func CodexAuthCallback(c *gin.Context) {
 	code := strings.TrimSpace(c.Query("code"))
@@ -83,37 +129,10 @@ func CodexAuthCallback(c *gin.Context) {
 		return
 	}
 
-	st, err := service.CodexLoadOAuthState(state)
-	if err != nil {
-		c.Data(http.StatusBadRequest, "text/html; charset=utf-8", []byte("invalid or expired state"))
-		return
-	}
-	service.CodexDeleteOAuthState(state)
-
-	proxyURL := strings.TrimSpace(st.ProxyURL)
-	if proxyURL == "" && st.ChannelID > 0 {
-		if ch, err := model.GetChannelById(st.ChannelID, true); err == nil && ch != nil {
-			proxyURL = strings.TrimSpace(ch.GetProxyURL())
-		}
-	}
-	if proxyURL == "" {
-		proxyURL = strings.TrimSpace(os.Getenv("CODEX_OAUTH_PROXY_URL"))
-	}
-
-	td, err := service.CodexExchangeCodeForTokens(c.Request.Context(), code, st.CodeVerifier, st.RedirectURI, proxyURL)
+	sessionID, channelID, bound, _, err := finalizeCodexOAuth(c, code, state)
 	if err != nil {
 		c.Data(http.StatusBadRequest, "text/html; charset=utf-8", []byte("exchange token failed: "+err.Error()))
 		return
-	}
-	_ = service.CodexSaveOAuthSession(st.SessionID, td)
-
-	bound := false
-	if st.ChannelID > 0 {
-		if err := bindCodexTokenToChannel(st.ChannelID, td); err == nil {
-			bound = true
-			_ = service.CodexCacheChannelToken(st.ChannelID, td)
-			service.CodexDeleteOAuthSession(st.SessionID)
-		}
 	}
 
 	html := fmt.Sprintf(`<!doctype html><html><head><meta charset="utf-8"><title>Codex 授权完成</title></head>
@@ -135,7 +154,7 @@ func CodexAuthCallback(c *gin.Context) {
   <h2>Codex 授权完成</h2>
   <p>你可以关闭此窗口。</p>
 </div>
-</body></html>`, st.SessionID, st.ChannelID, bound)
+</body></html>`, sessionID, channelID, bound)
 
 	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(html))
 }
@@ -257,6 +276,89 @@ func bindCodexTokenToChannel(channelID int, td *service.CodexTokenData) error {
 	}
 	ch.Key = td.RefreshToken
 	return ch.Save()
+}
+
+func extractCodeStateFromCallbackInput(input string) (string, string) {
+	s := strings.TrimSpace(input)
+	if s == "" {
+		return "", ""
+	}
+	s = strings.ReplaceAll(s, "\n", "")
+	s = strings.ReplaceAll(s, "\r", "")
+	s = strings.TrimSpace(s)
+
+	parseAsURL := func(raw string) (string, string) {
+		u, err := url.Parse(raw)
+		if err != nil || u == nil {
+			return "", ""
+		}
+		q := u.Query()
+		return strings.TrimSpace(q.Get("code")), strings.TrimSpace(q.Get("state"))
+	}
+
+	if strings.Contains(s, "://") {
+		code, state := parseAsURL(s)
+		if code != "" && state != "" {
+			return code, state
+		}
+	} else if strings.HasPrefix(s, "localhost:") {
+		code, state := parseAsURL("http://" + s)
+		if code != "" && state != "" {
+			return code, state
+		}
+	} else if strings.HasPrefix(s, "/") {
+		code, state := parseAsURL("http://localhost" + s)
+		if code != "" && state != "" {
+			return code, state
+		}
+	}
+
+	qs := s
+	if i := strings.Index(qs, "?"); i >= 0 {
+		qs = qs[i+1:]
+	}
+	vals, err := url.ParseQuery(qs)
+	if err != nil {
+		return "", ""
+	}
+	return strings.TrimSpace(vals.Get("code")), strings.TrimSpace(vals.Get("state"))
+}
+
+func finalizeCodexOAuth(c *gin.Context, code, state string) (sessionID string, channelID int, bound bool, td *service.CodexTokenData, err error) {
+	st, err := service.CodexLoadOAuthState(state)
+	if err != nil {
+		return "", 0, false, nil, fmt.Errorf("invalid or expired state")
+	}
+
+	proxyURL := strings.TrimSpace(st.ProxyURL)
+	if proxyURL == "" && st.ChannelID > 0 {
+		if ch, err2 := model.GetChannelById(st.ChannelID, true); err2 == nil && ch != nil {
+			proxyURL = strings.TrimSpace(ch.GetProxyURL())
+		}
+	}
+	if proxyURL == "" {
+		proxyURL = strings.TrimSpace(os.Getenv("CODEX_OAUTH_PROXY_URL"))
+	}
+
+	td, err = service.CodexExchangeCodeForTokens(c.Request.Context(), code, st.CodeVerifier, st.RedirectURI, proxyURL)
+	if err != nil {
+		return "", 0, false, nil, err
+	}
+	// exchange 成功后再销毁 state，避免用户粘贴错误 URL 时无法重试
+	service.CodexDeleteOAuthState(state)
+
+	_ = service.CodexSaveOAuthSession(st.SessionID, td)
+
+	bound = false
+	if st.ChannelID > 0 {
+		if err := bindCodexTokenToChannel(st.ChannelID, td); err == nil {
+			bound = true
+			_ = service.CodexCacheChannelToken(st.ChannelID, td)
+			service.CodexDeleteOAuthSession(st.SessionID)
+		}
+	}
+
+	return st.SessionID, st.ChannelID, bound, td, nil
 }
 
 func getRequestScheme(c *gin.Context) string {

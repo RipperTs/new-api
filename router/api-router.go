@@ -87,6 +87,7 @@ func SetApiRouter(router *gin.Engine) {
 		{
 			// Codex OAuth 授权（仅用于 Codex 渠道）
 			channelRoute.POST("/codex_auth/start", controller.CodexAuthStart)
+			channelRoute.POST("/codex_auth/complete", controller.CodexAuthComplete)
 			channelRoute.GET("/codex_auth/session/:session_id", controller.CodexAuthGetSession)
 			channelRoute.POST("/:id/codex_auth/bind", controller.CodexAuthBind)
 			channelRoute.GET("/:id/codex_auth/status", controller.CodexAuthStatus)

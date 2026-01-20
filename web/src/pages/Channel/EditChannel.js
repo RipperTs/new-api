@@ -118,6 +118,8 @@ const EditChannel = (props) => {
   const [modelMappingRows, setModelMappingRows] = useState([]);
   const [codexAuthStatus, setCodexAuthStatus] = useState(null);
   const [codexAuthLoading, setCodexAuthLoading] = useState(false);
+  const [codexCallbackUrl, setCodexCallbackUrl] = useState('');
+  const codexOAuthDoneRef = useRef(false);
 
   // 工具：JSON字符串 -> 行
   const parseModelMappingToRows = (jsonStr) => {
@@ -297,6 +299,7 @@ const EditChannel = (props) => {
     });
     if (mode !== 'oauth') {
       setCodexAuthStatus(null);
+      setCodexCallbackUrl('');
     }
   };
 
@@ -337,6 +340,7 @@ const EditChannel = (props) => {
   const startCodexOAuth = async () => {
     setCodexAuthLoading(true);
     try {
+      codexOAuthDoneRef.current = false;
       const res = await API.post('/api/channel/codex_auth/start', {
         channel_id: isEdit ? parseInt(channelId) : 0,
         proxy_url: inputs.proxy_url || ''
@@ -371,6 +375,50 @@ const EditChannel = (props) => {
     }
   };
 
+  const completeCodexOAuth = async () => {
+    const cb = (codexCallbackUrl || '').trim();
+    if (!cb) {
+      showInfo('请粘贴回调 URL');
+      return;
+    }
+    setCodexAuthLoading(true);
+    try {
+      const res = await API.post('/api/channel/codex_auth/complete', {
+        callback_url: cb
+      });
+      if (!res?.data?.success) {
+        showError(res?.data?.message || '完成 Codex 授权失败');
+        return;
+      }
+      const { session_id, bound } = res.data.data || {};
+      codexOAuthDoneRef.current = true;
+      if (isEdit) {
+        if (!bound && session_id) {
+          await API.post(`/api/channel/${channelId}/codex_auth/bind`, { session_id });
+        }
+        await loadChannel();
+      } else if (session_id) {
+        setInputs((prev) => {
+          const s = safeParseJSON(prev.setting);
+          const next = {
+            ...s,
+            auth_mode: 'oauth',
+            codex_oauth_session_id: session_id
+          };
+          return {
+            ...prev,
+            base_url: CODEX_OFFICIAL_BASE_URL,
+            setting: JSON.stringify(next, null, 2)
+          };
+        });
+      }
+      await refreshCodexAuthStatus();
+      setCodexCallbackUrl('');
+      showSuccess('Codex 授权完成');
+    } finally {
+      setCodexAuthLoading(false);
+    }
+  };
 
   const fetchUpstreamModelList = async (name) => {
     // if (inputs['type'] !== 1) {
@@ -495,7 +543,9 @@ const EditChannel = (props) => {
     const handler = async (event) => {
       if (!event?.data || event.data.type !== 'CODEX_OAUTH_DONE') return;
       if (inputs.type !== 45) return;
+      if (codexOAuthDoneRef.current) return;
       const { session_id, bound } = event.data || {};
+      codexOAuthDoneRef.current = true;
       if (isEdit) {
         if (!bound && session_id) {
           await API.post(`/api/channel/${channelId}/codex_auth/bind`, { session_id });
@@ -759,6 +809,11 @@ const EditChannel = (props) => {
                         style={{ marginBottom: 10 }}
                         description={t('如遇到 “Country, region, or territory not supported”，请在「代理URL」填写可用地区的代理后再授权')}
                       />
+                      <Banner
+                        type="info"
+                        style={{ marginBottom: 10 }}
+                        description={t('线上部署无法接收 localhost 回调：登录授权完成后浏览器会跳转到 localhost（报错无影响），复制地址栏的回调 URL（包含 code 和 state）粘贴到下方再点击「完成授权」')}
+                      />
                       <Space>
                         <Button
                           type="primary"
@@ -767,10 +822,26 @@ const EditChannel = (props) => {
                         >
                           {isEdit ? t('授权登录并绑定') : t('开始授权登录')}
                         </Button>
+                        <Button
+                          loading={codexAuthLoading}
+                          disabled={!codexCallbackUrl.trim()}
+                          onClick={completeCodexOAuth}
+                        >
+                          {t('完成授权')}
+                        </Button>
                         <Button loading={codexAuthLoading} onClick={refreshCodexAuthStatus}>
                           {t('刷新状态')}
                         </Button>
                       </Space>
+                      <div style={{ marginTop: 10 }}>
+                        <Typography.Text strong>{t('回调 URL')}：</Typography.Text>
+                      </div>
+                      <TextArea
+                        placeholder="http://localhost:1455/auth/callback?code=...&state=..."
+                        autosize={{ minRows: 2, maxRows: 4 }}
+                        value={codexCallbackUrl}
+                        onChange={(v) => setCodexCallbackUrl(v)}
+                      />
                       {codexAuthStatus && (
                         <Banner
                           style={{ marginTop: 10 }}
