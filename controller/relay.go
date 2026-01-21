@@ -138,6 +138,17 @@ func Relay(c *gin.Context) {
 	}
 
 	if openaiErr != nil {
+		if relayMode == relayconstant.RelayModeCodexCLI {
+			// Codex CLI 只认 SSE：最终失败时也用 SSE 输出，避免客户端静默中断。
+			// 429 场景下保留 usage_limit_reached 等上游信息，其它 429 仍返回通用提示。
+			if openaiErr.StatusCode == http.StatusTooManyRequests && openaiErr.Error.Type != "usage_limit_reached" {
+				openaiErr.Error.Message = "当前分组上游负载已饱和，请稍后再试"
+			}
+			msg := common.MessageWithRequestId(openaiErr.Error.Message, requestId)
+			relay.WriteCodexCLIErrorSSE(c, msg)
+			return
+		}
+
 		if openaiErr.StatusCode == http.StatusTooManyRequests {
 			openaiErr.Error.Message = "当前分组上游负载已饱和，请稍后再试"
 		}
@@ -248,6 +259,9 @@ func getChannel(c *gin.Context, group, originalModel string, retryCount int) (*m
 	var err error
 	if relayMode == relayconstant.RelayModeResponses {
 		channel, err = model.GetRandomSatisfiedChannelByTypes(group, originalModel, retryCount, []int{common.ChannelTypeOpenAI})
+	} else if relayMode == relayconstant.RelayModeCodexCLI {
+		// Codex CLI 只支持 Codex 渠道：重试时也只从 Codex 渠道中选择，避免选到不兼容渠道导致本地错误而中断重试。
+		channel, err = model.GetRandomSatisfiedChannelByTypes(group, originalModel, retryCount, []int{common.ChannelTypeCodex})
 	} else {
 		channel, err = model.GetRandomSatisfiedChannel(group, originalModel, retryCount)
 	}
@@ -312,6 +326,10 @@ func processChannelError(c *gin.Context, channelId int, channelType int, channel
 		// 检查是否还有其他可用渠道支持相同的模型
 		group := c.GetString("group")
 		hasOtherChannels := model.HasOtherAvailableChannels(group, originalModel, channelId)
+		if channelType == common.ChannelTypeCodex {
+			// Codex CLI 场景：只认为同类型（Codex）渠道可替代，避免误把“最后一个 Codex 渠道”禁用掉。
+			hasOtherChannels = model.HasOtherAvailableChannelsByTypes(group, originalModel, channelId, []int{common.ChannelTypeCodex})
+		}
 
 		if hasOtherChannels {
 			// 还有其他可用渠道，正常禁用当前渠道

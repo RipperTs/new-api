@@ -331,6 +331,33 @@ func HasOtherAvailableChannels(group string, model string, excludeChannelId int)
 	return count > 0
 }
 
+// HasOtherAvailableChannelsByTypes 检查除了指定渠道外，是否还有其他可用的渠道支持相同的模型（按渠道类型过滤）。
+// 出错时保守处理：返回 true，避免误禁用。
+func HasOtherAvailableChannelsByTypes(group string, model string, excludeChannelId int, allowedTypes []int) bool {
+	if len(allowedTypes) == 0 {
+		return HasOtherAvailableChannels(group, model, excludeChannelId)
+	}
+
+	trueVal := "1"
+	if common.UsingPostgreSQL {
+		trueVal = "true"
+	}
+
+	groupColWithTable := "abilities." + groupCol
+
+	var count int64
+	err := DB.Model(&Ability{}).
+		Joins("JOIN channels ON channels.id = abilities.channel_id").
+		Where(groupColWithTable+" = ? AND abilities.model = ? AND abilities.enabled = "+trueVal+" AND abilities.channel_id != ?", group, model, excludeChannelId).
+		Where("channels.type IN ?", allowedTypes).
+		Count(&count).Error
+	if err != nil {
+		common.SysError(fmt.Sprintf("Check other available channels by types failed: %s", err.Error()))
+		return true
+	}
+	return count > 0
+}
+
 func FixAbility() (int, error) {
 	var channelIds []int
 	count := 0

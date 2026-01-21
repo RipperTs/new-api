@@ -151,46 +151,63 @@ func CodexCLIHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) {
 	}
 	httpResp := respAny.(*http.Response)
 	if httpResp.StatusCode != http.StatusOK {
-		// Codex CLI 只认 SSE（并且要求 response.completed）。这里将上游错误包成 SSE 返回，避免 CLI 误报“stream closed”。
+		// 上游返回非 200：返回 OpenAIErrorWithStatusCode 让 controller 走统一的重试/自动禁用逻辑。
+		// （最终失败时由 controller 负责为 Codex CLI 输出 SSE 形式的错误，避免 CLI 静默）
 		raw, _ := io.ReadAll(httpResp.Body)
 		_ = httpResp.Body.Close()
 
-		msg := parseUpstreamBodyMessage(raw)
+		errResp := dto.GeneralErrorResponse{}
+		_ = json.Unmarshal(bytes.TrimSpace(raw), &errResp)
+
+		msg := strings.TrimSpace(errResp.ToMessage())
+		if msg == "" {
+			msg = parseUpstreamBodyMessage(raw)
+		}
+		// 补充部分上游在 usage_limit_reached 中返回的可读信息（如 resets_in_seconds），便于定位与自动禁用原因记录。
+		if strings.EqualFold(strings.TrimSpace(errResp.Error.Type), "usage_limit_reached") && msg != "" {
+			var meta struct {
+				Error struct {
+					PlanType         string `json:"plan_type"`
+					ResetsAt         int64  `json:"resets_at"`
+					ResetsInSeconds  int64  `json:"resets_in_seconds"`
+					ResetSecondsHint int64  `json:"reset_seconds_hint"`
+				} `json:"error"`
+			}
+			if json.Unmarshal(bytes.TrimSpace(raw), &meta) == nil {
+				parts := make([]string, 0, 3)
+				if strings.TrimSpace(meta.Error.PlanType) != "" {
+					parts = append(parts, "plan_type="+strings.TrimSpace(meta.Error.PlanType))
+				}
+				if meta.Error.ResetsInSeconds > 0 {
+					parts = append(parts, fmt.Sprintf("resets_in_seconds=%d", meta.Error.ResetsInSeconds))
+				}
+				if meta.Error.ResetsAt > 0 {
+					parts = append(parts, fmt.Sprintf("resets_at=%d", meta.Error.ResetsAt))
+				}
+				if len(parts) > 0 {
+					msg = msg + " (" + strings.Join(parts, ", ") + ")"
+				}
+			}
+		}
 		if msg == "" {
 			msg = fmt.Sprintf("bad response status code %d", httpResp.StatusCode)
 		}
 		codexCLILogLine(c, relayInfo, fmt.Sprintf("upstream_status=%d content_type=%s body=%s", httpResp.StatusCode, httpResp.Header.Get("Content-Type"), truncateForLog(string(raw), 2000)))
-		service.SetEventStreamHeaders(c)
-		c.Writer.WriteHeader(http.StatusOK)
 
-		responseID := "resp_" + common.GetUUID()
-		failed := map[string]any{
-			"type": "response.failed",
-			"response": map[string]any{
-				"id":     responseID,
-				"status": "failed",
-			},
-			"error": map[string]any{
-				"message": msg,
-				"type":    "upstream_error",
-			},
+		openaiErr = &dto.OpenAIErrorWithStatusCode{
+			StatusCode: httpResp.StatusCode,
+			LocalError: false,
+			Error:      errResp.Error,
 		}
-		b, _ := json.Marshal(failed)
-		_, _ = c.Writer.Write([]byte("data: " + string(b) + "\n\n"))
-		if fl, ok := c.Writer.(http.Flusher); ok {
-			fl.Flush()
+		// 部分上游不返回标准 error 结构，这里兜底补全 message/type
+		if strings.TrimSpace(openaiErr.Error.Message) == "" {
+			openaiErr.Error.Message = msg
 		}
-
-		u, _ := service.ResponseText2Usage("", relayInfo.UpstreamModelName, relayInfo.PromptTokens)
-		_ = writeCodexCLIResponseCompleted(c, responseID, u)
-		_, _ = c.Writer.Write([]byte("data: [DONE]\n\n"))
-		if fl, ok := c.Writer.(http.Flusher); ok {
-			fl.Flush()
+		if strings.TrimSpace(openaiErr.Error.Type) == "" {
+			openaiErr.Error.Type = "upstream_error"
 		}
-		// 视为已处理响应：不再向上返回 openaiErr，避免 controller 再写 JSON
-		// 手动返还预扣额度
-		returnPreConsumedQuota(c, relayInfo, userQuota, preConsumedQuota)
-		return nil
+		service.ResetStatusCode(openaiErr, statusCodeMappingStr)
+		return openaiErr
 	}
 
 	usageAny, openaiErr := adaptor.DoResponse(c, httpResp, relayInfo)
@@ -254,6 +271,58 @@ func writeCodexCLIResponseCompleted(c *gin.Context, responseID string, usage *dt
 		f.Flush()
 	}
 	return err
+}
+
+// WriteCodexCLIErrorSSE 用于 controller 最终失败时输出可被 Codex CLI 接受的 SSE 错误。
+// 设计目标：避免 CLI “无输出/静默中断”，同时不影响 controller 的统一重试逻辑。
+func WriteCodexCLIErrorSSE(c *gin.Context, message string) {
+	if c == nil {
+		return
+	}
+	// 如果已经开始写响应（例如上游已部分输出），则不要再二次写入。
+	if c.Writer.Written() {
+		return
+	}
+
+	service.SetEventStreamHeaders(c)
+	c.Writer.WriteHeader(http.StatusOK)
+
+	msg := strings.TrimSpace(message)
+	if msg != "" {
+		evt := map[string]any{
+			"type":  "response.output_text.delta",
+			"delta": msg,
+		}
+		b, _ := json.Marshal(evt)
+		_, _ = c.Writer.Write([]byte("data: " + string(b) + "\n\n"))
+		if f, ok := c.Writer.(http.Flusher); ok {
+			f.Flush()
+		}
+	}
+
+	responseID := "resp_" + common.GetUUID()
+	failed := map[string]any{
+		"type": "response.failed",
+		"response": map[string]any{
+			"id":     responseID,
+			"status": "failed",
+		},
+		"error": map[string]any{
+			"message": msg,
+			"type":    "upstream_error",
+		},
+	}
+	b, _ := json.Marshal(failed)
+	_, _ = c.Writer.Write([]byte("data: " + string(b) + "\n\n"))
+	if f, ok := c.Writer.(http.Flusher); ok {
+		f.Flush()
+	}
+
+	_ = writeCodexCLIResponseCompleted(c, responseID, &dto.Usage{PromptTokens: 0, CompletionTokens: 0, TotalTokens: 0})
+	_, _ = c.Writer.Write([]byte("data: [DONE]\n\n"))
+	if f, ok := c.Writer.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 func codexCLIDebugEnabled(c *gin.Context, info *relaycommon.RelayInfo) bool {

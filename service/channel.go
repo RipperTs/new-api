@@ -51,6 +51,17 @@ func ShouldDisableChannel(channelType int, err *relaymodel.OpenAIErrorWithStatus
 			return true
 		}
 	}
+	// 429 通常是限流，可重试但不应直接禁用；但 Codex/Team 等场景可能出现 usage_limit_reached，
+	// 该错误通常在一段时间内持续存在（直到 resets_at），适合自动禁用以避免反复被选中。
+	if err.StatusCode == http.StatusTooManyRequests {
+		if strings.EqualFold(strings.TrimSpace(err.Error.Type), "usage_limit_reached") {
+			return true
+		}
+		codeStr := strings.TrimSpace(fmt.Sprint(err.Error.Code))
+		if strings.EqualFold(codeStr, "usage_limit_reached") {
+			return true
+		}
+	}
 	switch err.Error.Code {
 	case "invalid_api_key":
 		return true
