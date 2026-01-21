@@ -322,6 +322,12 @@ func processChannelError(c *gin.Context, channelId int, channelType int, channel
 	common.SendEmail(channelName+" 渠道调用异常!", common.GetEnvOrDefaultString("NOTIFICATION_EMAIL", "617498836@qq.com"),
 		fmt.Sprintf("通道 %s 调用失败，模型 %s，状态码 %d，错误信息 %s", channelName, originalModel, err.StatusCode, err.Error.Message))
 
+	// Codex 渠道在遇到 401/403 时清除 Session 缓存,避免复用失效的 Session ID
+	if channelType == common.ChannelTypeCodex && (err.StatusCode == 401 || err.StatusCode == 403) {
+		service.CodexInvalidateSessionCache(channelId)
+		common.LogWarn(c, fmt.Sprintf("Codex channel #%d returned %d, session cache invalidated", channelId, err.StatusCode))
+	}
+
 	if service.ShouldDisableChannel(channelType, err) && autoBan {
 		// 检查是否还有其他可用渠道支持相同的模型
 		group := c.GetString("group")

@@ -49,6 +49,9 @@ func ShouldDisableChannel(channelType int, err *relaymodel.OpenAIErrorWithStatus
 		switch channelType {
 		case common.ChannelTypeGemini:
 			return true
+		case common.ChannelTypeCodex:
+			// Codex 403 通常表示账号被封或权限不足,应自动禁用
+			return true
 		}
 	}
 	// 429 通常是限流，可重试但不应直接禁用；但 Codex/Team 等场景可能出现 usage_limit_reached，
