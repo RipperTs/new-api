@@ -130,34 +130,18 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *
 	if isOAuth {
 		header.Set("Originator", "codex_cli_rs")
 	}
-	// conversation_id 与 session_id 使用缓存机制
-	// 优先从客户端传入,其次从缓存获取(按 channel_id 维度,1小时内复用)
+	// conversation_id 与 session_id 每次请求自动生成
 	// 使用标准 UUID（带连字符），上游大小写不敏感
 	cid := strings.TrimSpace(c.Request.Header.Get("Conversation_id"))
-	sid := strings.TrimSpace(c.Request.Header.Get("Session_id"))
-
-	// 如果客户端未传入,则从缓存获取或创建新的
-	if cid == "" || sid == "" {
-		cachedSid, cachedCid, err := service.CodexGetOrCreateSessionCache(info.ChannelId)
-		if err == nil {
-			if cid == "" {
-				cid = cachedCid
-			}
-			if sid == "" {
-				sid = cachedSid
-			}
-		} else {
-			// 缓存失败时 fallback 到随机生成 (保持向后兼容)
-			if cid == "" {
-				cid = uuid.New().String()
-			}
-			if sid == "" {
-				sid = cid
-			}
-		}
+	if cid == "" {
+		cid = uuid.New().String()
 	}
-
 	header.Set("Conversation_id", cid)
+
+	sid := strings.TrimSpace(c.Request.Header.Get("Session_id"))
+	if sid == "" {
+		sid = cid
+	}
 	header.Set("Session_id", sid)
 	// 可选：chatgpt-account-id 由渠道设置传入
 	if isOAuth {
