@@ -10,6 +10,7 @@ import (
 	"one-api/dto"
 	"one-api/relay/channel"
 	relaycommon "one-api/relay/common"
+	"one-api/service"
 	"strings"
 )
 
@@ -47,7 +48,15 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
 	channel.SetupApiRequestHeader(info, c, req)
-	req.Set("x-api-key", info.ApiKey)
+	apiKey := info.ApiKey
+	if m, ok := info.ChannelSetting["auth_mode"].(string); ok && strings.EqualFold(m, "oauth") {
+		token, _, err := service.ClaudeGetAccessToken(c.Request.Context(), info.ChannelId, info.ApiKey, info.ProxyURL)
+		if err != nil {
+			return err
+		}
+		apiKey = token
+	}
+	req.Set("x-api-key", apiKey)
 	anthropicVersion := c.Request.Header.Get("anthropic-version")
 	if anthropicVersion == "" {
 		anthropicVersion = "2023-06-01"
@@ -69,7 +78,7 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 	req.Set("X-Stainless-Runtime-Version", "v20.18.1")
 	req.Set("anthropic-dangerous-direct-browser-access", "true")
 	// 兼容验证要求的额外头
-	req.Set("Authorization", fmt.Sprintf("Bearer %s", info.ApiKey))
+	req.Set("Authorization", fmt.Sprintf("Bearer %s", apiKey))
 	req.Set("accept-language", "*")
 	req.Set("sec-fetch-mode", "cors")
 

@@ -113,6 +113,14 @@ func GenRelayInfo(c *gin.Context) *RelayInfo {
 			}
 		}
 	}
+	// Claude Code OAuth 登录模式：未显式配置 base_url 时，默认走官方 claude.ai
+	if channelType == common.ChannelTypeClaudeCode {
+		if m, ok := channelSetting["auth_mode"].(string); ok && strings.EqualFold(m, "oauth") {
+			if channelBaseURL == "" {
+				info.BaseUrl = "https://claude.ai"
+			}
+		}
+	}
 	if info.ChannelType == common.ChannelTypeAzure {
 		info.ApiVersion = GetAPIVersion(c)
 	}

@@ -45,11 +45,16 @@ const (
 
 	// RelayModeCodexCLI 表示 Codex CLI 专用转发（保持 OpenAI Responses 格式原样透传）
 	RelayModeCodexCLI
+
+	// RelayModeClaudeMessages 表示 Claude Code /v1/messages 原生请求
+	RelayModeClaudeMessages
 )
 
 func Path2RelayMode(path string) int {
 	relayMode := RelayModeUnknown
-	if strings.HasPrefix(path, "/v1/chat/completions") || strings.HasPrefix(path, "/pg/chat/completions") {
+	if strings.HasPrefix(path, "/v1/messages") {
+		relayMode = RelayModeClaudeMessages
+	} else if strings.HasPrefix(path, "/v1/chat/completions") || strings.HasPrefix(path, "/pg/chat/completions") {
 		relayMode = RelayModeChatCompletions
 	} else if strings.HasPrefix(path, "/v1/codex-cli") {
 		relayMode = RelayModeCodexCLI

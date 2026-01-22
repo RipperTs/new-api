@@ -250,6 +250,8 @@ func AddChannel(c *gin.Context) {
 	channel.CreatedTime = common.GetTimestamp()
 	var codexSessionToken *service.CodexTokenData
 	codexSessionID := ""
+	var claudeSessionToken *service.ClaudeTokenData
+	claudeSessionID := ""
 	if channel.Type == common.ChannelTypeCodex {
 		st := channel.GetSetting()
 		if m, ok := st["auth_mode"].(string); ok && strings.EqualFold(m, "oauth") {
@@ -284,6 +286,38 @@ func AddChannel(c *gin.Context) {
 				}
 			} else {
 				c.JSON(http.StatusOK, gin.H{"success": false, "message": "请选择 Codex 授权方式后完成登录授权"})
+				return
+			}
+		}
+	}
+	if channel.Type == common.ChannelTypeClaudeCode {
+		st := channel.GetSetting()
+		if m, ok := st["auth_mode"].(string); ok && strings.EqualFold(m, "oauth") {
+			if sid, ok := st["claude_oauth_session_id"].(string); ok && strings.TrimSpace(sid) != "" {
+				claudeSessionID = strings.TrimSpace(sid)
+				td, err := service.ClaudeLoadOAuthSession(claudeSessionID)
+				if err != nil {
+					c.JSON(http.StatusOK, gin.H{"success": false, "message": "Claude 授权信息已过期，请重新授权"})
+					return
+				}
+				if strings.TrimSpace(td.RefreshToken) == "" {
+					c.JSON(http.StatusOK, gin.H{"success": false, "message": "Claude 授权信息无效，请重新授权"})
+					return
+				}
+				claudeSessionToken = td
+				channel.Key = td.RefreshToken
+				delete(st, "claude_oauth_session_id")
+				st["auth_mode"] = "oauth"
+				if strings.TrimSpace(td.Email) != "" {
+					st["claude_email"] = td.Email
+				}
+				channel.SetSetting(st)
+				if channel.GetBaseURL() == "" {
+					base := "https://claude.ai"
+					channel.BaseURL = &base
+				}
+			} else {
+				c.JSON(http.StatusOK, gin.H{"success": false, "message": "请选择 Claude 授权方式后完成登录授权"})
 				return
 			}
 		}
@@ -334,6 +368,29 @@ func AddChannel(c *gin.Context) {
 		// session_id 由前端随 setting 传入，这里不再保留
 		if codexSessionID != "" {
 			service.CodexDeleteOAuthSession(codexSessionID)
+		}
+		c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
+		return
+	}
+	// Claude OAuth 创建：仅创建单条（避免多 key 拆分，并确保能拿到 channel_id 做缓存绑定）
+	if channel.Type == common.ChannelTypeClaudeCode && claudeSessionToken != nil {
+		models := strings.Split(channel.Models, ",")
+		for _, model := range models {
+			if len(model) > 255 {
+				c.JSON(http.StatusOK, gin.H{
+					"success": false,
+					"message": fmt.Sprintf("模型名称过长: %s", model),
+				})
+				return
+			}
+		}
+		if err := channel.Insert(); err != nil {
+			c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
+			return
+		}
+		_ = service.ClaudeCacheChannelToken(channel.Id, claudeSessionToken)
+		if claudeSessionID != "" {
+			service.ClaudeDeleteOAuthSession(claudeSessionID)
 		}
 		c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
 		return

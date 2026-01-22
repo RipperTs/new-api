@@ -41,6 +41,7 @@ const REGION_EXAMPLE = {
 
 const fetchButtonTips = '1. 新建渠道时，请求通过当前浏览器发出；2. 编辑已有渠道，请求通过后端服务器发出';
 const CODEX_OFFICIAL_BASE_URL = 'https://chatgpt.com/backend-api';
+const CLAUDE_OFFICIAL_BASE_URL = 'https://claude.ai';
 
 function type2secretPrompt(type) {
   // inputs.type === 15 ? '按照如下格式输入：APIKey|SecretKey' : (inputs.type === 18 ? '按照如下格式输入：APPID|APISecret|APIKey' : '请输入渠道对应的鉴权密钥')
@@ -57,6 +58,8 @@ function type2secretPrompt(type) {
       return '按照如下格式输入：Ak|Sk|Region';
     case 45:
       return '请输入 Codex 的鉴权秘钥 (非Access Token)';
+    case 44:
+      return '请输入 Claude Code 的鉴权秘钥';
     default:
       return '请输入渠道对应的鉴权密钥';
   }
@@ -119,7 +122,11 @@ const EditChannel = (props) => {
   const [codexAuthStatus, setCodexAuthStatus] = useState(null);
   const [codexAuthLoading, setCodexAuthLoading] = useState(false);
   const [codexCallbackUrl, setCodexCallbackUrl] = useState('');
+  const [claudeAuthStatus, setClaudeAuthStatus] = useState(null);
+  const [claudeAuthLoading, setClaudeAuthLoading] = useState(false);
+  const [claudeCallbackUrl, setClaudeCallbackUrl] = useState('');
   const codexOAuthDoneRef = useRef(false);
+  const claudeOAuthDoneRef = useRef(false);
 
   // 工具：JSON字符串 -> 行
   const parseModelMappingToRows = (jsonStr) => {
@@ -303,6 +310,38 @@ const EditChannel = (props) => {
     }
   };
 
+  const getClaudeSetting = () => safeParseJSON(inputs.setting);
+  const getClaudeAuthMode = () => {
+    const s = getClaudeSetting();
+    return s.auth_mode === 'oauth' ? 'oauth' : 'api_key';
+  };
+  const getClaudeSessionId = () => {
+    const s = getClaudeSetting();
+    return s.claude_oauth_session_id || '';
+  };
+  const applyClaudeAuthMode = (mode) => {
+    setInputs((prev) => {
+      const s = safeParseJSON(prev.setting);
+      const next = { ...s };
+      if (mode === 'oauth') {
+        next.auth_mode = 'oauth';
+        return {
+          ...prev,
+          base_url: CLAUDE_OFFICIAL_BASE_URL,
+          setting: JSON.stringify(next, null, 2)
+        };
+      }
+      next.auth_mode = 'api_key';
+      delete next.claude_oauth_session_id;
+      delete next.claude_email;
+      return { ...prev, setting: JSON.stringify(next, null, 2) };
+    });
+    if (mode !== 'oauth') {
+      setClaudeAuthStatus(null);
+      setClaudeCallbackUrl('');
+    }
+  };
+
   const refreshCodexAuthStatus = async () => {
     if (inputs.type !== 45) return;
     const mode = getCodexAuthMode();
@@ -334,6 +373,40 @@ const EditChannel = (props) => {
   useEffect(() => {
     if (inputs.type === 45 && getCodexAuthMode() === 'oauth') {
       refreshCodexAuthStatus().then();
+    }
+  }, [inputs.type, inputs.setting, isEdit]);
+
+  const refreshClaudeAuthStatus = async () => {
+    if (inputs.type !== 44) return;
+    const mode = getClaudeAuthMode();
+    if (mode !== 'oauth') {
+      setClaudeAuthStatus(null);
+      return;
+    }
+    setClaudeAuthLoading(true);
+    try {
+      if (isEdit) {
+        const res = await API.get(`/api/channel/${channelId}/claude_auth/status`);
+        if (res?.data?.success) setClaudeAuthStatus(res.data.data);
+      } else {
+        const sid = getClaudeSessionId();
+        if (!sid) {
+          setClaudeAuthStatus(null);
+        } else {
+          const res = await API.get(`/api/channel/claude_auth/session/${sid}`);
+          if (res?.data?.success) setClaudeAuthStatus(res.data.data);
+        }
+      }
+    } catch (e) {
+      // ignore
+    } finally {
+      setClaudeAuthLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (inputs.type === 44 && getClaudeAuthMode() === 'oauth') {
+      refreshClaudeAuthStatus().then();
     }
   }, [inputs.type, inputs.setting, isEdit]);
 
@@ -420,6 +493,89 @@ const EditChannel = (props) => {
     }
   };
 
+  const startClaudeOAuth = async () => {
+    setClaudeAuthLoading(true);
+    try {
+      claudeOAuthDoneRef.current = false;
+      const res = await API.post('/api/channel/claude_auth/start', {
+        channel_id: isEdit ? parseInt(channelId) : 0,
+        proxy_url: inputs.proxy_url || ''
+      });
+      if (!res?.data?.success) {
+        showError(res?.data?.message || '启动 Claude 授权失败');
+        return;
+      }
+      const { auth_url, session_id } = res.data.data || {};
+      if (!auth_url || !session_id) {
+        showError('启动 Claude 授权失败');
+        return;
+      }
+      if (!isEdit) {
+        setInputs((prev) => {
+          const s = safeParseJSON(prev.setting);
+          const next = {
+            ...s,
+            auth_mode: 'oauth',
+            claude_oauth_session_id: session_id
+          };
+          return {
+            ...prev,
+            base_url: CLAUDE_OFFICIAL_BASE_URL,
+            setting: JSON.stringify(next, null, 2)
+          };
+        });
+      }
+      window.open(auth_url, '_blank', 'noopener,noreferrer');
+    } finally {
+      setClaudeAuthLoading(false);
+    }
+  };
+
+  const completeClaudeOAuth = async () => {
+    const cb = (claudeCallbackUrl || '').trim();
+    if (!cb) {
+      showInfo('请粘贴回调 URL');
+      return;
+    }
+    setClaudeAuthLoading(true);
+    try {
+      const res = await API.post('/api/channel/claude_auth/complete', {
+        callback_url: cb
+      });
+      if (!res?.data?.success) {
+        showError(res?.data?.message || '完成 Claude 授权失败');
+        return;
+      }
+      const { session_id, bound } = res.data.data || {};
+      claudeOAuthDoneRef.current = true;
+      if (isEdit) {
+        if (!bound && session_id) {
+          await API.post(`/api/channel/${channelId}/claude_auth/bind`, { session_id });
+        }
+        await loadChannel();
+      } else if (session_id) {
+        setInputs((prev) => {
+          const s = safeParseJSON(prev.setting);
+          const next = {
+            ...s,
+            auth_mode: 'oauth',
+            claude_oauth_session_id: session_id
+          };
+          return {
+            ...prev,
+            base_url: CLAUDE_OFFICIAL_BASE_URL,
+            setting: JSON.stringify(next, null, 2)
+          };
+        });
+      }
+      await refreshClaudeAuthStatus();
+      setClaudeCallbackUrl('');
+      showSuccess('Claude 授权完成');
+    } finally {
+      setClaudeAuthLoading(false);
+    }
+  };
+
   const fetchUpstreamModelList = async (name) => {
     // if (inputs['type'] !== 1) {
     //   showError(t('仅支持 OpenAI 接口格式'));
@@ -441,6 +597,9 @@ const EditChannel = (props) => {
       // 如果是新建模式，通过后端代理获取模型列表
       if (inputs.type === 45 && getCodexAuthMode() === 'oauth') {
         showError(t('Codex Auth 模式下暂不支持自动拉取模型列表，请手动选择'));
+        err = true;
+      } else if (inputs.type === 44 && getClaudeAuthMode() === 'oauth') {
+        showError(t('Claude Auth 模式下暂不支持自动拉取模型列表，请手动选择'));
         err = true;
       } else if (!inputs?.['key']) {
         showError(t('请填写密钥'));
@@ -541,33 +700,63 @@ const EditChannel = (props) => {
 
   useEffect(() => {
     const handler = async (event) => {
-      if (!event?.data || event.data.type !== 'CODEX_OAUTH_DONE') return;
-      if (inputs.type !== 45) return;
-      if (codexOAuthDoneRef.current) return;
-      const { session_id, bound } = event.data || {};
-      codexOAuthDoneRef.current = true;
-      if (isEdit) {
-        if (!bound && session_id) {
-          await API.post(`/api/channel/${channelId}/codex_auth/bind`, { session_id });
+      if (!event?.data) return;
+      if (event.data.type === 'CODEX_OAUTH_DONE') {
+        if (inputs.type !== 45) return;
+        if (codexOAuthDoneRef.current) return;
+        const { session_id, bound } = event.data || {};
+        codexOAuthDoneRef.current = true;
+        if (isEdit) {
+          if (!bound && session_id) {
+            await API.post(`/api/channel/${channelId}/codex_auth/bind`, { session_id });
+          }
+          await loadChannel();
+        } else if (session_id) {
+          setInputs((prev) => {
+            const s = safeParseJSON(prev.setting);
+            const next = {
+              ...s,
+              auth_mode: 'oauth',
+              codex_oauth_session_id: session_id
+            };
+            return {
+              ...prev,
+              base_url: CODEX_OFFICIAL_BASE_URL,
+              setting: JSON.stringify(next, null, 2)
+            };
+          });
         }
-        await loadChannel();
-      } else if (session_id) {
-        setInputs((prev) => {
-          const s = safeParseJSON(prev.setting);
-          const next = {
-            ...s,
-            auth_mode: 'oauth',
-            codex_oauth_session_id: session_id
-          };
-          return {
-            ...prev,
-            base_url: CODEX_OFFICIAL_BASE_URL,
-            setting: JSON.stringify(next, null, 2)
-          };
-        });
+        await refreshCodexAuthStatus();
+        showSuccess('Codex 授权完成');
       }
-      await refreshCodexAuthStatus();
-      showSuccess('Codex 授权完成');
+      if (event.data.type === 'CLAUDE_OAUTH_DONE') {
+        if (inputs.type !== 44) return;
+        if (claudeOAuthDoneRef.current) return;
+        const { session_id, bound } = event.data || {};
+        claudeOAuthDoneRef.current = true;
+        if (isEdit) {
+          if (!bound && session_id) {
+            await API.post(`/api/channel/${channelId}/claude_auth/bind`, { session_id });
+          }
+          await loadChannel();
+        } else if (session_id) {
+          setInputs((prev) => {
+            const s = safeParseJSON(prev.setting);
+            const next = {
+              ...s,
+              auth_mode: 'oauth',
+              claude_oauth_session_id: session_id
+            };
+            return {
+              ...prev,
+              base_url: CLAUDE_OFFICIAL_BASE_URL,
+              setting: JSON.stringify(next, null, 2)
+            };
+          });
+        }
+        await refreshClaudeAuthStatus();
+        showSuccess('Claude 授权完成');
+      }
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
@@ -575,6 +764,7 @@ const EditChannel = (props) => {
 
   const submit = async () => {
     const codexMode = inputs.type === 45 ? getCodexAuthMode() : 'api_key';
+    const claudeMode = inputs.type === 44 ? getClaudeAuthMode() : 'api_key';
     if (!isEdit && inputs.name === '') {
       showInfo(t('请填写渠道名称！'));
       return;
@@ -585,13 +775,32 @@ const EditChannel = (props) => {
         return;
       }
     }
+    if (isEdit && inputs.type === 44 && claudeMode === 'oauth') {
+      if (!claudeAuthStatus || !claudeAuthStatus.has_refresh) {
+        showInfo(t('请先完成 Claude 授权登录并绑定渠道！'));
+        return;
+      }
+    }
     if (!isEdit && inputs.type === 45 && codexMode === 'oauth') {
       const sid = getCodexSessionId();
       if (!sid) {
         showInfo(t('请先完成 Codex 授权登录！'));
         return;
       }
-    } else if (!isEdit && inputs.key === '') {
+    }
+    if (!isEdit && inputs.type === 44 && claudeMode === 'oauth') {
+      const sid = getClaudeSessionId();
+      if (!sid) {
+        showInfo(t('请先完成 Claude 授权登录！'));
+        return;
+      }
+    }
+    if (
+      !isEdit &&
+      inputs.key === '' &&
+      !(inputs.type === 45 && codexMode === 'oauth') &&
+      !(inputs.type === 44 && claudeMode === 'oauth')
+    ) {
       showInfo(t('请填写渠道名称和渠道密钥！'));
       return;
     }
@@ -786,6 +995,77 @@ const EditChannel = (props) => {
           )}
           {inputs.type !== 3 && inputs.type !== 8 && inputs.type !== 22 && inputs.type !== 36 && (
             <>
+              {inputs.type === 44 && (
+                <>
+                  <div style={{ marginTop: 10 }}>
+                    <Typography.Text strong>{t('Claude 认证方式')}：</Typography.Text>
+                  </div>
+                  <Select
+                    style={{ width: '50%' }}
+                    value={getClaudeAuthMode()}
+                    optionList={[
+                      { label: t('秘钥（镜像站/自建）'), value: 'api_key' },
+                      { label: t('Auth 登录（官方）'), value: 'oauth' }
+                    ]}
+                    onChange={(v) => {
+                      applyClaudeAuthMode(v);
+                    }}
+                  />
+                  {getClaudeAuthMode() === 'oauth' && (
+                    <div style={{ marginTop: 10 }}>
+                      <Banner
+                        type="info"
+                        style={{ marginBottom: 10 }}
+                        description={t('线上部署无法接收 localhost 回调：登录授权完成后浏览器会跳转到 localhost（报错无影响），复制地址栏的回调 URL（包含 code 和 state）粘贴到下方再点击「完成授权」')}
+                      />
+                      <Space>
+                        <Button
+                          type="primary"
+                          loading={claudeAuthLoading}
+                          onClick={startClaudeOAuth}
+                        >
+                          {isEdit ? t('授权登录并绑定') : t('开始授权登录')}
+                        </Button>
+                        <Button
+                          loading={claudeAuthLoading}
+                          disabled={!claudeCallbackUrl.trim()}
+                          onClick={completeClaudeOAuth}
+                        >
+                          {t('完成授权')}
+                        </Button>
+                        <Button loading={claudeAuthLoading} onClick={refreshClaudeAuthStatus}>
+                          {t('刷新状态')}
+                        </Button>
+                      </Space>
+                      <div style={{ marginTop: 10 }}>
+                        <Typography.Text strong>{t('回调 URL')}：</Typography.Text>
+                      </div>
+                      <TextArea
+                        placeholder="http://localhost:54545/callback?code=...&state=..."
+                        autosize={{ minRows: 2, maxRows: 4 }}
+                        value={claudeCallbackUrl}
+                        onChange={(v) => setClaudeCallbackUrl(v)}
+                      />
+                      {claudeAuthStatus && (
+                        <Banner
+                          style={{ marginTop: 10 }}
+                          type="success"
+                          description={
+                            <>
+                              <div>{t('授权信息已获取')}</div>
+                              {claudeAuthStatus.email && (
+                                <div>
+                                  {t('邮箱')}: {claudeAuthStatus.email}
+                                </div>
+                              )}
+                            </>
+                          }
+                        />
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
               {inputs.type === 45 && (
                 <>
                   <div style={{ marginTop: 10 }}>
@@ -874,13 +1154,19 @@ const EditChannel = (props) => {
                 label={t('请求地址')}
                 name="base_url"
                 placeholder={
-                  inputs.type === 45 && getCodexAuthMode() === 'oauth'
+                  (inputs.type === 45 && getCodexAuthMode() === 'oauth') ||
+                  (inputs.type === 44 && getClaudeAuthMode() === 'oauth')
                     ? t('已自动填写官方请求地址')
                     : inputs.type === 45
                     ? '填入 Codex 镜像站接口地址, 通常以 /v1 结尾'
+                    : inputs.type === 44
+                    ? '填入 Claude Code 镜像站接口地址, 通常以 /v1 结尾'
                     : t('此项可选，用于通过代理站来进行 API 调用')
                 }
-                disabled={inputs.type === 45 && getCodexAuthMode() === 'oauth'}
+                disabled={
+                  (inputs.type === 45 && getCodexAuthMode() === 'oauth') ||
+                  (inputs.type === 44 && getClaudeAuthMode() === 'oauth')
+                }
                 onChange={(value) => {
                   handleInputChange('base_url', value);
                 }}
@@ -1175,7 +1461,8 @@ const EditChannel = (props) => {
           <div style={{ marginTop: 10 }}>
             <Typography.Text strong>{t('密钥')}：</Typography.Text>
           </div>
-          {inputs.type === 45 && getCodexAuthMode() === 'oauth' ? (
+          {(inputs.type === 45 && getCodexAuthMode() === 'oauth') ||
+          (inputs.type === 44 && getClaudeAuthMode() === 'oauth') ? (
             <Input
               label={t('密钥')}
               name="key"
@@ -1246,7 +1533,10 @@ const EditChannel = (props) => {
                   checked={batch}
                   label={t('批量创建')}
                   name="batch"
-                  disabled={inputs.type === 45 && getCodexAuthMode() === 'oauth'}
+                  disabled={
+                    (inputs.type === 45 && getCodexAuthMode() === 'oauth') ||
+                    (inputs.type === 44 && getClaudeAuthMode() === 'oauth')
+                  }
                   onChange={() => setBatch(!batch)}
                 />
                 <Typography.Text strong>{t('批量创建')}</Typography.Text>
