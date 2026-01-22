@@ -52,11 +52,21 @@ func ShouldDisableChannel(channelType int, err *relaymodel.OpenAIErrorWithStatus
 		case common.ChannelTypeCodex:
 			// Codex 403 通常表示账号被封或权限不足,应自动禁用
 			return true
+		case common.ChannelTypeClaudeCode:
+			// Codex 403 通常表示账号被封或权限不足,应自动禁用
+			return true
 		}
 	}
 	// 429 通常是限流，可重试但不应直接禁用；但 Codex/Team 等场景可能出现 usage_limit_reached，
 	// 该错误通常在一段时间内持续存在（直到 resets_at），适合自动禁用以避免反复被选中。
 	if err.StatusCode == http.StatusTooManyRequests {
+		// 429 往往会在一段时间内持续出现（账号/会话级限流），启用自动禁用避免反复被选中
+		if channelType == common.ChannelTypeClaudeCode {
+			return true
+		}
+		if channelType == common.ChannelTypeCodex {
+			return true
+		}
 		if strings.EqualFold(strings.TrimSpace(err.Error.Type), "usage_limit_reached") {
 			return true
 		}

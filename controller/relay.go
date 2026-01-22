@@ -332,6 +332,10 @@ func processChannelError(c *gin.Context, channelId int, channelType int, channel
 			// Codex CLI 场景：只认为同类型（Codex）渠道可替代，避免误把“最后一个 Codex 渠道”禁用掉。
 			hasOtherChannels = model.HasOtherAvailableChannelsByTypes(group, originalModel, channelId, []int{common.ChannelTypeCodex})
 		}
+		if channelType == common.ChannelTypeClaudeCode {
+			// Claude Code：/v1/messages 仅支持同类型渠道，避免误把“最后一个 Claude Code 渠道”禁用掉。
+			hasOtherChannels = model.HasOtherAvailableChannelsByTypes(group, originalModel, channelId, []int{common.ChannelTypeClaudeCode})
+		}
 
 		if hasOtherChannels {
 			// 还有其他可用渠道，正常禁用当前渠道
