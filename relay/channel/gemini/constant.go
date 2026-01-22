@@ -1,6 +1,12 @@
 package gemini
 
 var ModelList = []string{
+	"gemini-2.5-flash",
+	"gemini-2.5-flash-lite",
+	"gemini-2.5-pro",
+	"gemini-3-flash",
+	"gemini-3-flash-preview",
+	"gemini-3-pro-preview",
 	// stable version
 	"gemini-1.5-pro", "gemini-1.5-flash", "gemini-1.5-flash-8b",
 	// latest version

@@ -1,7 +1,8 @@
 package deepseek
 
 var ModelList = []string{
-	"deepseek-chat", "deepseek-reasoner",
+	"deepseek-chat",
+	"deepseek-reasoner",
 }
 
 var ChannelName = "deepseek"

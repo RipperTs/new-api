@@ -1,7 +1,7 @@
 package openai
 
 var ModelList = []string{
-	"gpt-3.5-turbo", "gpt-3.5-turbo-0613", "gpt-3.5-turbo-1106", "gpt-3.5-turbo-0125",
+	"gpt-4o-mini", "gpt-3.5-turbo", "gpt-3.5-turbo-0613", "gpt-3.5-turbo-1106", "gpt-3.5-turbo-0125",
 	"gpt-3.5-turbo-16k", "gpt-3.5-turbo-16k-0613",
 	"gpt-3.5-turbo-instruct",
 	"gpt-4", "gpt-4-0613", "gpt-4-1106-preview", "gpt-4-0125-preview",
@@ -10,7 +10,7 @@ var ModelList = []string{
 	"gpt-4-vision-preview",
 	"chatgpt-4o-latest",
 	"gpt-4o", "gpt-4o-2024-05-13", "gpt-4o-2024-08-06", "gpt-4o-2024-11-20",
-	"gpt-4o-mini", "gpt-4o-mini-2024-07-18",
+	"gpt-4o-mini-2024-07-18",
 	"gpt-4.5-preview", "gpt-4.5-preview-2025-02-27",
 	"gpt-5-mini", "gpt-5-turbo", "gpt-5", "gpt-5-pro",
 	"o1-preview", "o1-preview-2024-09-12",
@@ -23,6 +23,7 @@ var ModelList = []string{
 	"gpt-4o-audio-preview", "gpt-4o-audio-preview-2024-10-01",
 	"gpt-4o-realtime-preview", "gpt-4o-realtime-preview-2024-10-01", "gpt-4o-realtime-preview-2024-12-17",
 	"gpt-4o-mini-realtime-preview", "gpt-4o-mini-realtime-preview-2024-12-17",
+	"gpt-5", "gpt-5.1", "gpt-5.1-mini", "gpt-oss-120b", "gpt-oss-20b", "gpt-5.2", "gpt-5.3",
 	"text-embedding-ada-002", "text-embedding-3-small", "text-embedding-3-large",
 	"text-curie-001", "text-babbage-001", "text-ada-001",
 	"text-moderation-latest", "text-moderation-stable",
