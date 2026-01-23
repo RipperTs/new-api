@@ -24,6 +24,7 @@ func EnableChannel(channelId int, channelName string) {
 	notifyRootUser(subject, content)
 }
 
+// ShouldDisableChannel 根据错误信息判断是否应自动禁用通道
 func ShouldDisableChannel(channelType int, err *relaymodel.OpenAIErrorWithStatusCode) bool {
 	if !common.AutomaticDisableChannelEnabled {
 		return false
@@ -75,12 +76,20 @@ func ShouldDisableChannel(channelType int, err *relaymodel.OpenAIErrorWithStatus
 			return true
 		}
 	}
+	// 402 codex 表示工作空间已被停用
+	if err.StatusCode == http.StatusPaymentRequired {
+		if channelType == common.ChannelTypeCodex {
+			return true
+		}
+	}
 	switch err.Error.Code {
 	case "invalid_api_key":
 		return true
 	case "account_deactivated":
 		return true
 	case "billing_not_active":
+		return true
+	case "deactivated_workspace":
 		return true
 	}
 	switch err.Error.Type {
