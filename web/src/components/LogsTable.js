@@ -395,6 +395,7 @@ const LogsTable = () => {
   const [showStat, setShowStat] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loadingStat, setLoadingStat] = useState(false);
+  const [groupOptions, setGroupOptions] = useState([]);
   const [activePage, setActivePage] = useState(1);
   const [logCount, setLogCount] = useState(ITEMS_PER_PAGE);
   const [pageSize, setPageSize] = useState(ITEMS_PER_PAGE);
@@ -406,6 +407,7 @@ const LogsTable = () => {
     username: '',
     token_name: '',
     model_name: '',
+    group: '',
     start_timestamp: timestamp2string(getTodayStartTimestamp()),
     end_timestamp: timestamp2string(now.getTime() / 1000 + 3600),
     channel: '',
@@ -414,6 +416,7 @@ const LogsTable = () => {
     username,
     token_name,
     model_name,
+    group,
     start_timestamp,
     end_timestamp,
     channel,
@@ -428,10 +431,39 @@ const LogsTable = () => {
     setInputs((inputs) => ({ ...inputs, [name]: value }));
   };
 
+  const loadGroupOptions = async () => {
+    try {
+      if (isAdminUser) {
+        const res = await API.get(`/api/group/`);
+        const groups = res.data?.data || [];
+        setGroupOptions(
+          groups.map((g) => ({
+            label: g,
+            value: g,
+          })),
+        );
+        return;
+      }
+      const res = await API.get(`/api/user/self/groups`);
+      const { success, data } = res.data;
+      if (success) {
+        const groups = Object.keys(data || {});
+        setGroupOptions(
+          groups.map((g) => ({
+            label: g,
+            value: g,
+          })),
+        );
+      }
+    } catch (e) {
+      // ignore
+    }
+  };
+
   const getLogSelfStat = async () => {
     let localStartTimestamp = Date.parse(start_timestamp) / 1000;
     let localEndTimestamp = Date.parse(end_timestamp) / 1000;
-    let url = `/api/log/self/stat?type=${logType}&token_name=${token_name}&model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}`;
+    let url = `/api/log/self/stat?type=${logType}&token_name=${token_name}&model_name=${model_name}&group=${group}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}`;
     url = encodeURI(url);
     let res = await API.get(url);
     const { success, message, data } = res.data;
@@ -445,7 +477,7 @@ const LogsTable = () => {
   const getLogStat = async () => {
     let localStartTimestamp = Date.parse(start_timestamp) / 1000;
     let localEndTimestamp = Date.parse(end_timestamp) / 1000;
-    let url = `/api/log/stat?type=${logType}&username=${username}&token_name=${token_name}&model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&channel=${channel}`;
+    let url = `/api/log/stat?type=${logType}&username=${username}&token_name=${token_name}&model_name=${model_name}&group=${group}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&channel=${channel}`;
     url = encodeURI(url);
     let res = await API.get(url);
     const { success, message, data } = res.data;
@@ -588,9 +620,9 @@ const LogsTable = () => {
     let localStartTimestamp = Date.parse(start_timestamp) / 1000;
     let localEndTimestamp = Date.parse(end_timestamp) / 1000;
     if (isAdminUser) {
-      url = `/api/log/?p=${startIdx}&page_size=${pageSize}&type=${logType}&username=${username}&token_name=${token_name}&model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&channel=${channel}`;
+      url = `/api/log/?p=${startIdx}&page_size=${pageSize}&type=${logType}&username=${username}&token_name=${token_name}&model_name=${model_name}&group=${group}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&channel=${channel}`;
     } else {
-      url = `/api/log/self/?p=${startIdx}&page_size=${pageSize}&type=${logType}&token_name=${token_name}&model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}`;
+      url = `/api/log/self/?p=${startIdx}&page_size=${pageSize}&type=${logType}&token_name=${token_name}&model_name=${model_name}&group=${group}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}`;
     }
     url = encodeURI(url);
     const res = await API.get(url);
@@ -642,6 +674,7 @@ const LogsTable = () => {
     const localPageSize =
       parseInt(localStorage.getItem('page-size')) || ITEMS_PER_PAGE;
     setPageSize(localPageSize);
+    loadGroupOptions().then();
     loadLogs(activePage, localPageSize)
       .then()
       .catch((reason) => {
@@ -689,6 +722,31 @@ const LogsTable = () => {
               name='model_name'
               onChange={(value) => handleInputChange(value, 'model_name')}
             />
+            {groupOptions.length > 0 ? (
+              <Form.Select
+                field='group'
+                label='分组'
+                style={{ width: 176 }}
+                value={group}
+                placeholder='全部分组'
+                name='group'
+                optionList={[
+                  { label: '全部分组', value: '' },
+                  ...groupOptions,
+                ]}
+                onChange={(value) => handleInputChange(value, 'group')}
+              />
+            ) : (
+              <Form.Input
+                field='group'
+                label='分组'
+                style={{ width: 176 }}
+                value={group}
+                placeholder={'可选值'}
+                name='group'
+                onChange={(value) => handleInputChange(value, 'group')}
+              />
+            )}
             <Form.DatePicker
               field='start_timestamp'
               label='起始时间'

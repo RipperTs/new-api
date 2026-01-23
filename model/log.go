@@ -120,7 +120,7 @@ func RecordConsumeLog(ctx context.Context, userId int, channelId int, promptToke
 	}
 	if common.DataExportEnabled {
 		gopool.Go(func() {
-			LogQuotaData(userId, username, modelName, quota, common.GetTimestamp(), promptTokens+completionTokens)
+			LogQuotaData(userId, username, modelName, group, quota, common.GetTimestamp(), promptTokens+completionTokens)
 		})
 	}
 }

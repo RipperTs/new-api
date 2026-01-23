@@ -27,10 +27,12 @@ const Detail = (props) => {
   let now = new Date();
   const [userState, userDispatch] = useContext(UserContext);
   const [styleState, styleDispatch] = useContext(StyleContext);
+  const [groupOptions, setGroupOptions] = useState([]);
   const [inputs, setInputs] = useState({
     username: '',
     token_name: '',
     model_name: '',
+    group: '',
     start_timestamp:
       localStorage.getItem('data_export_default_time') === 'hour'
         ? timestamp2string(now.getTime() / 1000 - 86400)
@@ -43,6 +45,7 @@ const Detail = (props) => {
   });
   const { username, model_name, start_timestamp, end_timestamp, channel } =
     inputs;
+  const { group } = inputs;
   const isAdminUser = isAdmin();
   const initialized = useRef(false);
   const [loading, setLoading] = useState(false);
@@ -191,6 +194,35 @@ const Detail = (props) => {
     setInputs((inputs) => ({ ...inputs, [name]: value }));
   };
 
+  const loadGroupOptions = async () => {
+    try {
+      if (isAdminUser) {
+        const res = await API.get(`/api/group/`);
+        const groups = res.data?.data || [];
+        setGroupOptions(
+          groups.map((g) => ({
+            label: g,
+            value: g,
+          })),
+        );
+        return;
+      }
+      const res = await API.get(`/api/user/self/groups`);
+      const { success, data } = res.data;
+      if (success) {
+        const groups = Object.keys(data || {});
+        setGroupOptions(
+          groups.map((g) => ({
+            label: g,
+            value: g,
+          })),
+        );
+      }
+    } catch (e) {
+      // ignore
+    }
+  };
+
   const loadQuotaData = async () => {
     setLoading(true);
     try {
@@ -198,9 +230,9 @@ const Detail = (props) => {
       let localStartTimestamp = Date.parse(start_timestamp) / 1000;
       let localEndTimestamp = Date.parse(end_timestamp) / 1000;
       if (isAdminUser) {
-        url = `/api/data/?username=${username}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&default_time=${dataExportDefaultTime}`;
+        url = `/api/data/?username=${username}&group=${group}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&default_time=${dataExportDefaultTime}`;
       } else {
-        url = `/api/data/self/?start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&default_time=${dataExportDefaultTime}`;
+        url = `/api/data/self/?group=${group}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&default_time=${dataExportDefaultTime}`;
       }
       const res = await API.get(url);
       const { success, message, data } = res.data;
@@ -374,6 +406,7 @@ const Detail = (props) => {
         isWatchingThemeSwitch: true,
       });
       initialized.current = true;
+      loadGroupOptions().then();
       initChart();
     }
   }, []);
@@ -426,6 +459,32 @@ const Detail = (props) => {
                   handleInputChange(value, 'data_export_default_time')
                 }
               ></Form.Select>
+              {groupOptions.length > 0 ? (
+                <Form.Select
+                  field='group'
+                  label='分组'
+                  style={{ width: 176 }}
+                  initValue={group}
+                  value={group}
+                  placeholder={'全部分组'}
+                  name='group'
+                  optionList={[
+                    { label: '全部分组', value: '' },
+                    ...groupOptions,
+                  ]}
+                  onChange={(value) => handleInputChange(value, 'group')}
+                />
+              ) : (
+                <Form.Input
+                  field='group'
+                  label='分组'
+                  style={{ width: 176 }}
+                  value={group}
+                  placeholder={'可选值'}
+                  name='group'
+                  onChange={(value) => handleInputChange(value, 'group')}
+                />
+              )}
               {isAdminUser && (
                 <>
                   <Form.Input
