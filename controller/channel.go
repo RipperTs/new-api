@@ -272,11 +272,13 @@ func AddChannel(c *gin.Context) {
 				st["auth_mode"] = "oauth"
 				if strings.TrimSpace(td.Email) != "" {
 					st["codex_email"] = td.Email
+				} else {
+					delete(st, "codex_email")
 				}
 				if strings.TrimSpace(td.AccountID) != "" {
-					if v, ok := st["chatgpt_account_id"].(string); !ok || strings.TrimSpace(v) == "" {
-						st["chatgpt_account_id"] = td.AccountID
-					}
+					st["chatgpt_account_id"] = td.AccountID
+				} else {
+					delete(st, "chatgpt_account_id")
 				}
 				channel.SetSetting(st)
 				// 默认走官方 backend-api
@@ -310,6 +312,8 @@ func AddChannel(c *gin.Context) {
 				st["auth_mode"] = "oauth"
 				if strings.TrimSpace(td.Email) != "" {
 					st["claude_email"] = td.Email
+				} else {
+					delete(st, "claude_email")
 				}
 				channel.SetSetting(st)
 				if channel.GetBaseURL() == "" {

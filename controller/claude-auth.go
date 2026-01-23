@@ -282,6 +282,8 @@ func bindClaudeTokenToChannel(channelID int, td *service.ClaudeTokenData) error 
 	setting["auth_mode"] = "oauth"
 	if strings.TrimSpace(td.Email) != "" {
 		setting["claude_email"] = td.Email
+	} else {
+		delete(setting, "claude_email")
 	}
 	ch.SetSetting(setting)
 

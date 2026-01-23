@@ -98,9 +98,9 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *
 			return err
 		}
 		apiKey = token
-		// 自动补齐 chatgpt-account-id（优先使用渠道 setting 的显式配置）
+		// 自动补齐 chatgpt-account-id：当与 token 解出的 account_id 不一致时，以 token 为准（避免沿用旧账号）
 		if tokenData != nil && tokenData.AccountID != "" {
-			if v, ok := info.ChannelSetting["chatgpt_account_id"].(string); !ok || strings.TrimSpace(v) == "" {
+			if v, ok := info.ChannelSetting["chatgpt_account_id"].(string); !ok || strings.TrimSpace(v) == "" || strings.TrimSpace(v) != tokenData.AccountID {
 				info.ChannelSetting["chatgpt_account_id"] = tokenData.AccountID
 			}
 		}

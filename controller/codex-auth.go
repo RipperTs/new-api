@@ -261,11 +261,14 @@ func bindCodexTokenToChannel(channelID int, td *service.CodexTokenData) error {
 	setting["auth_mode"] = "oauth"
 	if strings.TrimSpace(td.Email) != "" {
 		setting["codex_email"] = td.Email
+	} else {
+		delete(setting, "codex_email")
 	}
+	// OAuth refresh_token 绑定后，account_id 必须与当前授权一致，避免沿用旧账号导致请求头 Chatgpt-Account-Id 错乱
 	if strings.TrimSpace(td.AccountID) != "" {
-		if v, ok := setting["chatgpt_account_id"].(string); !ok || strings.TrimSpace(v) == "" {
-			setting["chatgpt_account_id"] = td.AccountID
-		}
+		setting["chatgpt_account_id"] = td.AccountID
+	} else {
+		delete(setting, "chatgpt_account_id")
 	}
 	ch.SetSetting(setting)
 
