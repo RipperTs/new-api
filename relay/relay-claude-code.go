@@ -129,6 +129,10 @@ func ClaudeCodeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithSta
 	}
 	if err != nil {
 		returnPreConsumedQuota(c, relayInfo, userQuota, preConsumedQuota)
+		// 客户端中断连接（broken pipe / connection reset）不应视为渠道失败，避免误报与误禁用
+		if common.IsClientDisconnectError(err) {
+			return service.OpenAIErrorWrapperLocal(err, "client_disconnected", 499)
+		}
 		return service.OpenAIErrorWrapper(err, "claude_code_passthrough_failed", http.StatusInternalServerError)
 	}
 

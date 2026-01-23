@@ -318,6 +318,14 @@ func shouldRetry(c *gin.Context, openaiErr *dto.OpenAIErrorWithStatusCode, retry
 }
 
 func processChannelError(c *gin.Context, channelId int, channelType int, channelName string, originalModel string, autoBan bool, err *dto.OpenAIErrorWithStatusCode) {
+	if err == nil {
+		return
+	}
+	// 本地错误（参数校验/客户端中断等）不应视为“渠道异常”，避免误报与误禁用
+	if err.LocalError || common.IsClientDisconnectMessage(err.Error.Message) {
+		common.LogInfo(c, fmt.Sprintf("relay aborted (channel #%d, status code: %d): %s", channelId, err.StatusCode, err.Error.Message))
+		return
+	}
 	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
 	// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
 	common.LogError(c, fmt.Sprintf("relay error (channel #%d, status code: %d): %s", channelId, err.StatusCode, err.Error.Message))
