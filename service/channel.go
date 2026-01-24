@@ -39,6 +39,10 @@ func ShouldDisableChannel(channelType int, err *relaymodel.OpenAIErrorWithStatus
 	if common.IsClientDisconnectMessage(err.Error.Message) {
 		return false
 	}
+	// 网关/代理层的转发失败（例如 connection refused / reset before headers）通常不是渠道自身问题
+	if common.IsUpstreamTransportFailureMessage(err.Error.Message) {
+		return false
+	}
 	// 服务器异常类错误（5xx）直接判定为禁用，避免问题渠道持续被选中
 	// 超时（504/524）通常为暂时性网络/边缘问题，保持不禁用，仅交给重试策略
 	if err.StatusCode/100 == 5 {

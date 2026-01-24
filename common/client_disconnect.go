@@ -52,3 +52,18 @@ func IsClientDisconnectMessage(msg string) bool {
 		strings.Contains(m, "client disconnected") ||
 		strings.Contains(m, "context canceled")
 }
+
+// IsUpstreamTransportFailureMessage 判断是否为网关/代理层的转发失败（通常还未拿到上游响应头），
+// 这类问题往往是临时网络/依赖故障，不应触发“自动禁用渠道”。
+func IsUpstreamTransportFailureMessage(msg string) bool {
+	m := strings.ToLower(strings.TrimSpace(msg))
+	if m == "" {
+		return false
+	}
+	return strings.Contains(m, "upstream connect error") ||
+		strings.Contains(m, "disconnect/reset before headers") ||
+		strings.Contains(m, "remote connection failure") ||
+		strings.Contains(m, "transport failure reason") ||
+		strings.Contains(m, "delayed connect error") ||
+		strings.Contains(m, "connection refused")
+}
