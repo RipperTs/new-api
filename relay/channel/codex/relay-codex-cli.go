@@ -47,6 +47,7 @@ func codexCLIPassthroughStreamHandler(c *gin.Context, resp *http.Response, info 
 	var responseID string
 	isFirst := true
 	evtLogN := 0
+	var readErr error
 
 	for {
 		line, err := reader.ReadBytes('\n')
@@ -114,10 +115,14 @@ func codexCLIPassthroughStreamHandler(c *gin.Context, resp *http.Response, info 
 			}
 		}
 		if err != nil {
+			readErr = err
 			break
 		}
 	}
 
+	if readErr != nil {
+		codexCLILogLine(c, info, fmt.Sprintf("upstream_read_error=%v", readErr))
+	}
 	if !sawCompleted {
 		codexCLILogLine(c, info, "inject_completed=eof_without_completed")
 		_ = writeSyntheticResponseCompleted(c, responseID, info, usage, outputText.String())

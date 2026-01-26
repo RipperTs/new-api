@@ -36,6 +36,7 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 	if err != nil {
 		return nil, fmt.Errorf("new request failed: %w", err)
 	}
+	req = req.WithContext(c.Request.Context())
 	err = a.SetupRequestHeader(c, &req.Header, info)
 	if err != nil {
 		return nil, fmt.Errorf("setup request header failed: %w", err)
@@ -56,6 +57,7 @@ func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBod
 	if err != nil {
 		return nil, fmt.Errorf("new request failed: %w", err)
 	}
+	req = req.WithContext(c.Request.Context())
 	// set form data
 	req.Header.Set("Content-Type", c.Request.Header.Get("Content-Type"))
 
@@ -111,6 +113,15 @@ func doRequest(c *gin.Context, req *http.Request, info interface{}) (*http.Respo
 		if v != nil {
 			proxyURL = v.ProxyURL
 		}
+		// Streaming/SSE requests must NOT use a http.Client timeout, otherwise the stream
+		// can be cut off before response.completed/[DONE] are received.
+		if v != nil && v.IsStream {
+			if proxyURL != "" {
+				client = service.GetStreamingHttpClientWithProxy(proxyURL)
+			} else {
+				client = service.GetStreamingHttpClient()
+			}
+		}
 	case *common.TaskRelayInfo:
 		// TaskRelayInfo 暂时不支持代理，使用默认客户端
 		client = service.GetHttpClient()
@@ -147,6 +158,7 @@ func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.TaskRelayInfo,
 	if err != nil {
 		return nil, fmt.Errorf("new request failed: %w", err)
 	}
+	req = req.WithContext(c.Request.Context())
 	req.GetBody = func() (io.ReadCloser, error) {
 		return io.NopCloser(requestBody), nil
 	}
