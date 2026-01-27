@@ -163,32 +163,7 @@ func CodexCLIHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) {
 		if msg == "" {
 			msg = parseUpstreamBodyMessage(raw)
 		}
-		// 补充部分上游在 usage_limit_reached 中返回的可读信息（如 resets_in_seconds），便于定位与自动禁用原因记录。
-		if strings.EqualFold(strings.TrimSpace(errResp.Error.Type), "usage_limit_reached") && msg != "" {
-			var meta struct {
-				Error struct {
-					PlanType         string `json:"plan_type"`
-					ResetsAt         int64  `json:"resets_at"`
-					ResetsInSeconds  int64  `json:"resets_in_seconds"`
-					ResetSecondsHint int64  `json:"reset_seconds_hint"`
-				} `json:"error"`
-			}
-			if json.Unmarshal(bytes.TrimSpace(raw), &meta) == nil {
-				parts := make([]string, 0, 3)
-				if strings.TrimSpace(meta.Error.PlanType) != "" {
-					parts = append(parts, "plan_type="+strings.TrimSpace(meta.Error.PlanType))
-				}
-				if meta.Error.ResetsInSeconds > 0 {
-					parts = append(parts, fmt.Sprintf("resets_in_seconds=%d", meta.Error.ResetsInSeconds))
-				}
-				if meta.Error.ResetsAt > 0 {
-					parts = append(parts, fmt.Sprintf("resets_at=%d", meta.Error.ResetsAt))
-				}
-				if len(parts) > 0 {
-					msg = msg + " (" + strings.Join(parts, ", ") + ")"
-				}
-			}
-		}
+		msg = AugmentUsageLimitReachedMessage(raw, errResp.Error.Type, msg)
 		if msg == "" {
 			msg = fmt.Sprintf("bad response status code %d", httpResp.StatusCode)
 		}
@@ -200,7 +175,8 @@ func CodexCLIHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) {
 			Error:      errResp.Error,
 		}
 		// 部分上游不返回标准 error 结构，这里兜底补全 message/type
-		if strings.TrimSpace(openaiErr.Error.Message) == "" {
+		// msg 来自“尽量全”的上游响应信息（兼容非标准结构/补充 usage_limit_reached 的重置时间），优先使用它。
+		if strings.TrimSpace(msg) != "" {
 			openaiErr.Error.Message = msg
 		}
 		if strings.TrimSpace(openaiErr.Error.Type) == "" {

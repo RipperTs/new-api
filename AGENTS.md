@@ -24,6 +24,7 @@
 ## Testing Guidelines
 - 框架：Go 原生 `testing`；文件命名 `*_test.go`，与被测包同目录。
 - 建议优先为 `service/` 与复杂 `controller/` 增加表驱动测试；运行：`go test -v ./...`，可选覆盖率：`go test -cover ./...`。
+- 默认不新增/补充测试用例来“验证功能”；只有在用户明确要求时才添加测试文件或用例。
 
 ## Commit & Pull Request Guidelines
 - 提交信息：动词开头、简洁明确（中文为主），必要时可用 Conventional Commits，如 `feat(router): 支持X`。
@@ -40,4 +41,3 @@
 ## Agent-Specific Instructions
 - 遵循本文件约定；最小化改动，避免不相关重构；新增环境变量与公共接口必须补文档与示例。
 - 保持目录职责清晰：路由→控制器→服务→模型；公共方法放入 `common/`，常量放入 `constant/`。
-

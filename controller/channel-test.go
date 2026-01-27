@@ -138,16 +138,24 @@ func testChannel(channel *model.Channel, testModel string) (err error, openAIErr
 		if httpResp.StatusCode != http.StatusOK {
 			raw, _ := io.ReadAll(httpResp.Body)
 			_ = httpResp.Body.Close()
-			msg := parseUpstreamTestErrorMessage(raw)
+			msg, errType, errCode := parseUpstreamTestErrorMessage(raw)
 			if msg == "" {
 				msg = fmt.Sprintf("bad response status code %d", httpResp.StatusCode)
+			}
+			t := strings.TrimSpace(errType)
+			if t == "" {
+				t = "upstream_error"
+			}
+			code := any("bad_response_status_code")
+			if errCode != nil {
+				code = errCode
 			}
 			return fmt.Errorf("status code %d: %s", httpResp.StatusCode, msg), &dto.OpenAIErrorWithStatusCode{
 				StatusCode: httpResp.StatusCode,
 				Error: dto.OpenAIError{
 					Message: msg,
-					Type:    "upstream_error",
-					Code:    "bad_response_status_code",
+					Type:    t,
+					Code:    code,
 				},
 			}
 		}
@@ -217,26 +225,31 @@ func pickCodexOAuthTestModel(models []string) string {
 	return models[0]
 }
 
-func parseUpstreamTestErrorMessage(raw []byte) string {
+func parseUpstreamTestErrorMessage(raw []byte) (msg string, errType string, errCode any) {
 	b := bytes.TrimSpace(raw)
 	if len(b) == 0 {
-		return ""
+		return "", "", nil
 	}
 	var errResp dto.GeneralErrorResponse
 	if json.Unmarshal(b, &errResp) == nil {
+		errType = strings.TrimSpace(errResp.Error.Type)
+		errCode = errResp.Error.Code
 		if errResp.Error.Message != "" {
-			return errResp.Error.Message
+			msg = errResp.Error.Message
+		} else if m := strings.TrimSpace(errResp.ToMessage()); m != "" {
+			msg = m
 		}
-		if msg := strings.TrimSpace(errResp.ToMessage()); msg != "" {
-			return msg
+		if msg != "" {
+			msg = relay.AugmentUsageLimitReachedMessage(b, errType, msg)
+			return msg, errType, errCode
 		}
 	}
 	// 兜底：返回原始字符串（截断，避免太长）
 	s := strings.TrimSpace(string(b))
 	if len(s) > 300 {
-		return s[:300]
+		return s[:300], "", nil
 	}
-	return s
+	return s, "", nil
 }
 
 // isEmbeddingModel 判断是否为 Embedding 模型

@@ -143,7 +143,7 @@ func Relay(c *gin.Context) {
 		if relayMode == relayconstant.RelayModeCodexCLI {
 			// Codex CLI 只认 SSE：最终失败时也用 SSE 输出，避免客户端静默中断。
 			// 429 场景下保留 usage_limit_reached 等上游信息，其它 429 仍返回通用提示。
-			if openaiErr.StatusCode == http.StatusTooManyRequests && openaiErr.Error.Type != "usage_limit_reached" {
+			if openaiErr.StatusCode == http.StatusTooManyRequests && !strings.EqualFold(strings.TrimSpace(openaiErr.Error.Type), "usage_limit_reached") {
 				openaiErr.Error.Message = "当前分组上游负载已饱和，请稍后再试"
 			}
 			msg := common.MessageWithRequestId(openaiErr.Error.Message, requestId)
@@ -152,7 +152,10 @@ func Relay(c *gin.Context) {
 		}
 
 		if openaiErr.StatusCode == http.StatusTooManyRequests {
-			openaiErr.Error.Message = "当前分组上游负载已饱和，请稍后再试"
+			// 429 场景下保留 usage_limit_reached 等上游信息，其它 429 仍返回通用提示。
+			if !strings.EqualFold(strings.TrimSpace(openaiErr.Error.Type), "usage_limit_reached") {
+				openaiErr.Error.Message = "当前分组上游负载已饱和，请稍后再试"
+			}
 		}
 		openaiErr.Error.Message = common.MessageWithRequestId(openaiErr.Error.Message, requestId)
 		c.JSON(openaiErr.StatusCode, gin.H{
