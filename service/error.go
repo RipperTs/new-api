@@ -27,6 +27,23 @@ func MidjourneyErrorWithStatusCodeWrapper(code int, desc string, statusCode int)
 
 // OpenAIErrorWrapper wraps an error into an OpenAIErrorWithStatusCode
 func OpenAIErrorWrapper(err error, code string, statusCode int) *dto.OpenAIErrorWithStatusCode {
+	// 客户端主动取消/断开（SSE 停止、浏览器中断等）属于正常行为：
+	// - 不应记录为“请求上游失败”，避免刷屏
+	// - 不应触发重试/自动禁用渠道
+	// - 避免把上游地址等细节暴露到日志/返回体
+	if common.IsClientDisconnectError(err) {
+		openAIError := dto.OpenAIError{
+			Message: "context canceled",
+			Type:    "new_api_error",
+			Code:    code,
+		}
+		return &dto.OpenAIErrorWithStatusCode{
+			Error:      openAIError,
+			StatusCode: 499, // Client Closed Request（常见约定码，Go 标准库无常量）
+			LocalError: true,
+		}
+	}
+
 	text := err.Error()
 	lowerText := strings.ToLower(text)
 	if strings.Contains(lowerText, "post") || strings.Contains(lowerText, "dial") || strings.Contains(lowerText, "http") {
@@ -120,6 +137,17 @@ func TaskErrorWrapperLocal(err error, code string, statusCode int) *dto.TaskErro
 }
 
 func TaskErrorWrapper(err error, code string, statusCode int) *dto.TaskError {
+	// 客户端取消/断开不应当作上游失败，也不应暴露内部细节
+	if common.IsClientDisconnectError(err) {
+		return &dto.TaskError{
+			Code:       code,
+			Message:    "context canceled",
+			StatusCode: 499,
+			Error:      err,
+			LocalError: true,
+		}
+	}
+
 	text := err.Error()
 	lowerText := strings.ToLower(text)
 	if strings.Contains(lowerText, "post") || strings.Contains(lowerText, "dial") || strings.Contains(lowerText, "http") {
