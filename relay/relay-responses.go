@@ -23,7 +23,7 @@ func ResponsesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) 
 	if relayInfo.RelayMode != relayconstant.RelayModeResponses {
 		return service.OpenAIErrorWrapperLocal(errors.New("invalid relay mode"), "invalid_relay_mode", http.StatusBadRequest)
 	}
-	if relayInfo.ChannelType != common.ChannelTypeOpenAI {
+	if relayInfo.ChannelType != common.ChannelTypeOpenAI && relayInfo.ChannelType != common.ChannelTypeCodex {
 		return service.OpenAIErrorWrapperLocal(errors.New("当前渠道不支持 Responses API"), "responses_not_supported", http.StatusBadRequest)
 	}
 
@@ -35,6 +35,15 @@ func ResponsesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) 
 	modelName, _ := requestMap["model"].(string)
 	if modelName == "" {
 		return service.OpenAIErrorWrapperLocal(errors.New("model is required"), "model_required", http.StatusBadRequest)
+	}
+
+	// 兼容老字段：max_tokens/max_completion_tokens -> max_output_tokens（用于预扣配额/估算）
+	if _, ok := requestMap["max_output_tokens"]; !ok {
+		if v, ok := requestMap["max_completion_tokens"]; ok && v != nil {
+			requestMap["max_output_tokens"] = v
+		} else if v, ok := requestMap["max_tokens"]; ok && v != nil {
+			requestMap["max_output_tokens"] = v
+		}
 	}
 
 	stream, _ := requestMap["stream"].(bool)
@@ -141,7 +150,10 @@ func ResponsesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) 
 
 	// 仅当客户端请求了 stream 时，才根据上游响应头确认是否继续走流式
 	if relayInfo.IsStream {
-		relayInfo.IsStream = strings.HasPrefix(httpResp.Header.Get("Content-Type"), "text/event-stream")
+		// Codex 上游偶尔不正确标注 Content-Type，但 body 仍是 SSE；这里不强行降级，交由 Codex handler 自行探测。
+		if relayInfo.ChannelType != common.ChannelTypeCodex {
+			relayInfo.IsStream = strings.HasPrefix(httpResp.Header.Get("Content-Type"), "text/event-stream")
+		}
 	}
 
 	if httpResp.StatusCode != http.StatusOK {

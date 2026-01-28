@@ -111,9 +111,13 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *
 	header.Set("OpenAI-Beta", "responses=experimental")
 	header.Set("Openai-Beta", "responses=experimental")
 	header.Set("openai-beta", "responses=experimental")
-	// 强制 SSE
-	header.Set("Accept", "text/event-stream")
-	header.Set("Connection", "Keep-Alive")
+	// SSE / JSON：多数场景都用 SSE（包括非流式聚合），但 Responses API 非流式尽量按 JSON 拉取。
+	if info != nil && info.RelayMode == constant.RelayModeResponses && !info.IsStream {
+		header.Set("Accept", "application/json")
+	} else {
+		header.Set("Accept", "text/event-stream")
+		header.Set("Connection", "Keep-Alive")
+	}
 	// Version：Codex CLI 会带该头；缺省给一个常用版本避免上游拒绝
 	if strings.TrimSpace(c.Request.Header.Get("Version")) != "" {
 		header.Set("Version", c.Request.Header.Get("Version"))
@@ -150,6 +154,116 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *
 		}
 	}
 	return nil
+}
+
+func (a *Adaptor) ConvertResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request map[string]any) (any, error) {
+	if request == nil {
+		return nil, errors.New("request is nil")
+	}
+
+	model, _ := request["model"].(string)
+	if strings.TrimSpace(model) == "" {
+		return nil, errors.New("model is required")
+	}
+
+	// 为了不影响预扣配额/敏感词/计费统计，这里返回 JSON RawMessage（上游请求体）并尽量不修改 requestMap 本身。
+	upstream := cloneMapStringAny(request)
+
+	// Codex backend-api 对 input 的兼容性更严格：要求 input 必须是 list。
+	// 兼容用户用 OpenAI Responses 习惯传 input="..." 的写法。
+	normalizeCodexResponsesInput(upstream)
+
+	// Codex 上游要求显式传 store=false（若省略会报 “Store must be set to false”）
+	upstream["store"] = false
+
+	base := ""
+	if info != nil {
+		base = strings.TrimRight(strings.TrimSpace(info.BaseUrl), "/")
+	}
+	isV1Upstream := strings.HasSuffix(base, "/v1")
+	isOAuth := false
+	if info != nil && info.ChannelSetting != nil {
+		if m, ok := info.ChannelSetting["auth_mode"].(string); ok && strings.EqualFold(m, "oauth") {
+			isOAuth = true
+		}
+	}
+
+	// chatgpt backend-api 或 API Key 模式的上游对参数兼容性不一：避免 400
+	if !isV1Upstream || !isOAuth {
+		delete(upstream, "max_output_tokens")
+		delete(upstream, "temperature")
+		delete(upstream, "top_p")
+		delete(upstream, "top_k")
+		delete(upstream, "seed")
+	}
+
+	// 兼容老字段：max_tokens/max_completion_tokens -> max_output_tokens（仅影响上游请求体）
+	if _, ok := upstream["max_output_tokens"]; !ok {
+		if v, ok := upstream["max_completion_tokens"]; ok && v != nil {
+			upstream["max_output_tokens"] = v
+		} else if v, ok := upstream["max_tokens"]; ok && v != nil {
+			upstream["max_output_tokens"] = v
+		}
+	}
+	delete(upstream, "max_tokens")
+	delete(upstream, "max_completion_tokens")
+
+	info.UpstreamModelName = model
+	b, err := json.Marshal(upstream)
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(b), nil
+}
+
+func cloneMapStringAny(src map[string]any) map[string]any {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]any, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
+func normalizeCodexResponsesInput(m map[string]any) {
+	if m == nil {
+		return
+	}
+	inputVal, ok := m["input"]
+	if !ok || inputVal == nil {
+		m["input"] = []any{codexDefaultInputMessage("")}
+		return
+	}
+
+	switch v := inputVal.(type) {
+	case string:
+		m["input"] = []any{codexDefaultInputMessage(v)}
+	case []any:
+		// 允许空数组，但很多上游仍会 400；这里给个最小占位，避免直接报错。
+		if len(v) == 0 {
+			m["input"] = []any{codexDefaultInputMessage("")}
+		}
+	case map[string]any:
+		// 单对象 -> list
+		m["input"] = []any{v}
+	default:
+		// 兜底：保持原样（交给上游报错），但尽量别传 nil
+	}
+}
+
+func codexDefaultInputMessage(text string) map[string]any {
+	return map[string]any{
+		"type": "message",
+		"role": "user",
+		"content": []any{
+			map[string]any{
+				"type": "input_text",
+				"text": text,
+			},
+		},
+	}
 }
 
 func (a *Adaptor) ConvertRequest(c *gin.Context, info *relaycommon.RelayInfo, req *dto.GeneralOpenAIRequest) (any, error) {
@@ -451,6 +565,14 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 }
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *dto.OpenAIErrorWithStatusCode) {
+	if info.RelayMode == constant.RelayModeResponses {
+		if info.IsStream {
+			err, usage = codexCLIPassthroughStreamHandler(c, resp, info)
+		} else {
+			err, usage = codexResponsesPassthroughHandler(c, resp, info)
+		}
+		return
+	}
 	if info.RelayMode == constant.RelayModeCodexCLI {
 		if info.IsStream {
 			err, usage = codexCLIPassthroughStreamHandler(c, resp, info)

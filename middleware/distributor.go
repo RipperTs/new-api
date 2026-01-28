@@ -97,7 +97,11 @@ func Distribute() func(c *gin.Context) {
 
 			if shouldSelectChannel {
 				if strings.HasPrefix(c.Request.URL.Path, "/v1/responses") {
+					// 兼容：/v1/responses 默认优先走 OpenAI 渠道（保持历史行为），若无可用 OpenAI 渠道再回退 Codex 渠道。
 					channel, err = model.GetRandomSatisfiedChannelByTypes(userGroup, modelRequest.Model, 0, []int{common.ChannelTypeOpenAI})
+					if err != nil {
+						channel, err = model.GetRandomSatisfiedChannelByTypes(userGroup, modelRequest.Model, 0, []int{common.ChannelTypeCodex})
+					}
 				} else {
 					channel, err = model.GetRandomSatisfiedChannel(userGroup, modelRequest.Model, 0)
 				}
