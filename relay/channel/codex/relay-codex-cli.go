@@ -50,6 +50,7 @@ func codexCLIPassthroughStreamHandler(c *gin.Context, resp *http.Response, info 
 	isFirst := true
 	evtLogN := 0
 	var readErr error
+	tail := newSSETail(80, 1200)
 
 	for {
 		line, err := reader.ReadBytes('\n')
@@ -59,6 +60,7 @@ func codexCLIPassthroughStreamHandler(c *gin.Context, resp *http.Response, info 
 				info.SetFirstResponseTime()
 			}
 			trimmed := bytes.TrimSpace(bytes.TrimSuffix(line, []byte("\r")))
+			tail.AddBytes(trimmed)
 			if bytes.HasPrefix(trimmed, []byte("data:")) {
 				payload := bytes.TrimSpace(bytes.TrimPrefix(trimmed, []byte("data:")))
 				if bytes.Equal(payload, []byte("[DONE]")) {
@@ -141,6 +143,16 @@ func codexCLIPassthroughStreamHandler(c *gin.Context, resp *http.Response, info 
 
 	if readErr != nil {
 		codexCLILogLine(c, info, fmt.Sprintf("upstream_read_error=%v", readErr))
+	}
+	// 断流/失败时记录上游“原始 SSE 尾部”，便于排查与快速修复。
+	// 注意：很多上游在 response.completed 后会直接 EOF（不发 [DONE]），这是正常结束，不应打“错误尾部”日志。
+	unexpectedDisconnect := sawFailedOrError ||
+		!sawResponseCompleted ||
+		(readErr != nil && readErr != io.EOF)
+	if unexpectedDisconnect {
+		meta := fmt.Sprintf("upstream_tail_meta response_id=%s saw_done=%v saw_response_completed=%v saw_failed_or_error=%v read_err=%v", responseID, sawDone, sawResponseCompleted, sawFailedOrError, readErr)
+		codexCLILogAlwaysLine(c, info, meta)
+		logCodexCLILongLineAlways(c, info, "upstream_sse_tail=", tail.String(), 3500)
 	}
 	if !sawResponseCompleted {
 		codexCLILogLine(c, info, "inject_completed=eof_without_completed")
@@ -394,6 +406,37 @@ func codexCLILogLine(c *gin.Context, info *relaycommon.RelayInfo, line string) {
 	common.SysLog(fmt.Sprintf("[codex-cli] reqid=%s channel_id=%d %s", reqID, chID, truncateForLog(line, 4000)))
 }
 
+func codexCLILogAlwaysLine(c *gin.Context, info *relaycommon.RelayInfo, line string) {
+	reqID := ""
+	if c != nil {
+		reqID = c.GetString(common.RequestIdKey)
+	}
+	chID := 0
+	if info != nil {
+		chID = info.ChannelId
+	}
+	common.SysLog(fmt.Sprintf("[codex-cli] reqid=%s channel_id=%d %s", reqID, chID, truncateForLog(line, 4000)))
+}
+
+func logCodexCLILongLineAlways(c *gin.Context, info *relaycommon.RelayInfo, prefix string, s string, maxEach int) {
+	ss := strings.TrimSpace(s)
+	if ss == "" {
+		return
+	}
+	if maxEach <= 0 {
+		maxEach = 3500
+	}
+	// 日志行本身还有 reqid/channel_id 等前缀，分段避免被截断。
+	for len(ss) > 0 {
+		chunk := ss
+		if len(chunk) > maxEach {
+			chunk = chunk[:maxEach]
+		}
+		codexCLILogAlwaysLine(c, info, prefix+chunk)
+		ss = strings.TrimSpace(strings.TrimPrefix(ss[len(chunk):], "\n"))
+	}
+}
+
 func truncateForLog(s string, max int) string {
 	ss := strings.TrimSpace(s)
 	if max <= 0 || len(ss) <= max {
@@ -489,6 +532,56 @@ func extractTextFromBody(body []byte) string {
 		s = s[:500]
 	}
 	return s
+}
+
+type sseTail struct {
+	lines      []string
+	maxLines   int
+	maxPerLine int
+}
+
+func newSSETail(maxLines int, maxPerLine int) *sseTail {
+	if maxLines <= 0 {
+		maxLines = 50
+	}
+	if maxPerLine <= 0 {
+		maxPerLine = 1000
+	}
+	return &sseTail{
+		lines:      make([]string, 0, maxLines),
+		maxLines:   maxLines,
+		maxPerLine: maxPerLine,
+	}
+}
+
+func (t *sseTail) AddBytes(b []byte) {
+	if t == nil || len(b) == 0 {
+		return
+	}
+	s := string(b)
+	s = strings.ReplaceAll(s, "\n", "\\n")
+	s = strings.ReplaceAll(s, "\r", "\\r")
+	s = strings.ReplaceAll(s, "\t", "\\t")
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return
+	}
+	if t.maxPerLine > 0 && len(s) > t.maxPerLine {
+		s = s[:t.maxPerLine] + "…"
+	}
+	if len(t.lines) >= t.maxLines {
+		copy(t.lines, t.lines[1:])
+		t.lines[len(t.lines)-1] = s
+		return
+	}
+	t.lines = append(t.lines, s)
+}
+
+func (t *sseTail) String() string {
+	if t == nil || len(t.lines) == 0 {
+		return ""
+	}
+	return strings.Join(t.lines, "\\n")
 }
 
 func extractErrorObjectFromEvent(evt map[string]any) map[string]any {

@@ -439,10 +439,9 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 
 	// 检测是否为测试请求（如果不需要设置流式响应头，说明是测试）
 	isTestRequest := c.Request.URL.Path == "/api/channel/test" || strings.Contains(c.Request.URL.Path, "/channel/test/")
+	streamStarted := false
 
-	if !isTestRequest {
-		service.SetEventStreamHeaders(c)
-	} else {
+	if isTestRequest {
 		fmt.Printf("[ClaudeCode] Detected test request, will collect response\n")
 	}
 
@@ -459,6 +458,33 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 		if err != nil {
 			common.SysError("error unmarshalling stream response: " + err.Error())
 			continue
+		}
+		if strings.TrimSpace(claudeResponse.Error.Type) != "" || strings.EqualFold(strings.TrimSpace(claudeResponse.Type), "error") {
+			// 上游以 SSE 形式返回错误事件：避免客户端“无输出/静默”，尽可能把错误带出去。
+			openaiErr := &dto.OpenAIErrorWithStatusCode{
+				Error: dto.OpenAIError{
+					Message: strings.TrimSpace(claudeResponse.Error.Message),
+					Type:    strings.TrimSpace(claudeResponse.Error.Type),
+					Code:    strings.TrimSpace(claudeResponse.Error.Type),
+				},
+				StatusCode: resp.StatusCode,
+				LocalError: false,
+			}
+			if strings.TrimSpace(openaiErr.Error.Type) == "" {
+				openaiErr.Error.Type = "upstream_error"
+				openaiErr.Error.Code = "upstream_error"
+			}
+			if strings.TrimSpace(openaiErr.Error.Message) == "" {
+				openaiErr.Error.Message = "upstream error"
+			}
+			if !isTestRequest && streamStarted {
+				// 已经开始输出 stream：再额外发一条 SSE 错误，至少保证可见，然后结束。
+				_ = service.ObjectData(c, map[string]any{
+					"error": openaiErr.Error,
+				})
+				service.Done(c)
+			}
+			return openaiErr, nil
 		}
 
 		response, claudeUsage := StreamResponseClaude2OpenAI(requestMode, &claudeResponse)
@@ -491,6 +517,10 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 		response.Model = info.UpstreamModelName
 
 		if !isTestRequest {
+			if !streamStarted {
+				service.SetEventStreamHeaders(c)
+				streamStarted = true
+			}
 			err = service.ObjectData(c, response)
 			if err != nil {
 				common.LogError(c, "send_stream_response_failed: "+err.Error())
@@ -541,6 +571,14 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 		}
 		resp.Body.Close()
 		return nil, usage
+	}
+
+	// 上游提前断流且未输出任何 chunk：返回明确错误，避免客户端“无输出/静默”。
+	if !streamStarted {
+		if err := scanner.Err(); err != nil {
+			return service.OpenAIErrorWrapper(err, "upstream_read_error", http.StatusBadGateway), nil
+		}
+		return service.OpenAIErrorWrapper(io.ErrUnexpectedEOF, "upstream_unexpected_eof", http.StatusBadGateway), nil
 	}
 
 	if info.ShouldIncludeUsage {

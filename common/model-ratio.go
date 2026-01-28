@@ -302,6 +302,7 @@ func UpdateModelRatioByJSONString(jsonStr string) error {
 	return json.Unmarshal([]byte(jsonStr), &modelRatioMap)
 }
 
+// GetModelRatio 返回模型的比例，如果模型不存在则返回15
 func GetModelRatio(name string) float64 {
 	GetModelRatioMap()
 	if strings.HasPrefix(name, "gpt-4-gizmo") {
@@ -309,8 +310,7 @@ func GetModelRatio(name string) float64 {
 	}
 	ratio, ok := modelRatioMap[name]
 	if !ok {
-		SysError("model ratio not found: " + name)
-		return 30
+		return 15
 	}
 	return ratio
 }

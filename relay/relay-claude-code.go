@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"io"
@@ -23,7 +22,8 @@ import (
 func ClaudeCodeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) {
 	relayInfo := relaycommon.GenRelayInfo(c)
 	if relayInfo.RelayMode != relayconstant.RelayModeClaudeMessages {
-		return service.OpenAIErrorWrapperLocal(errors.New("invalid relay mode"), "invalid_relay_mode", http.StatusBadRequest)
+		writeClaudeError(c, http.StatusBadRequest, "invalid_request_error", "invalid relay mode")
+		return nil
 	}
 	if relayInfo.ChannelType != common.ChannelTypeClaudeCode {
 		writeClaudeError(c, http.StatusBadRequest, "invalid_request_error", "当前渠道不支持 /v1/messages")
@@ -43,19 +43,20 @@ func ClaudeCodeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithSta
 		writeClaudeError(c, http.StatusBadRequest, "invalid_request_error", "messages is required")
 		return nil
 	}
+	relayInfo.IsStream = claudeReq.Stream
 
 	modelMapping := c.GetString("model_mapping")
 	if modelMapping != "" && modelMapping != "{}" {
 		modelMap := make(map[string]string)
 		if err := json.Unmarshal([]byte(modelMapping), &modelMap); err != nil {
-			return service.OpenAIErrorWrapperLocal(err, "unmarshal_model_mapping_failed", http.StatusInternalServerError)
+			writeClaudeMaybeStreamError(c, relayInfo, http.StatusInternalServerError, "api_error", err.Error())
+			return nil
 		}
 		if modelMap[claudeReq.Model] != "" {
 			claudeReq.Model = modelMap[claudeReq.Model]
 		}
 	}
 	relayInfo.UpstreamModelName = claudeReq.Model
-	relayInfo.IsStream = claudeReq.Stream
 
 	openaiMessages := claudeRequestToMessages(&claudeReq)
 	if setting.ShouldCheckPromptSensitive() {
@@ -67,7 +68,8 @@ func ClaudeCodeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithSta
 
 	promptTokens, err := service.CountTokenMessages(relayInfo, openaiMessages, claudeReq.Model, claudeReq.Stream)
 	if err != nil {
-		return service.OpenAIErrorWrapper(err, "count_token_messages_failed", http.StatusInternalServerError)
+		writeClaudeMaybeStreamError(c, relayInfo, http.StatusInternalServerError, "api_error", err.Error())
+		return nil
 	}
 	relayInfo.PromptTokens = promptTokens
 
@@ -90,25 +92,30 @@ func ClaudeCodeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithSta
 
 	preConsumedQuota, userQuota, openaiErr := preConsumeQuota(c, preConsumedQuota, relayInfo)
 	if openaiErr != nil {
-		return openaiErr
+		writeClaudeMaybeStreamError(c, relayInfo, openaiErr.StatusCode, mapOpenAIErrorTypeToClaude(openaiErr.Error.Type), openaiErr.Error.Message)
+		return nil
 	}
 
 	adaptor := GetAdaptor(relayInfo.ApiType)
 	if adaptor == nil {
-		return service.OpenAIErrorWrapperLocal(fmt.Errorf("invalid api type: %d", relayInfo.ApiType), "invalid_api_type", http.StatusBadRequest)
+		returnPreConsumedQuota(c, relayInfo, userQuota, preConsumedQuota)
+		writeClaudeMaybeStreamError(c, relayInfo, http.StatusBadRequest, "invalid_request_error", fmt.Sprintf("invalid api type: %d", relayInfo.ApiType))
+		return nil
 	}
 	adaptor.Init(relayInfo)
 
 	jsonData, err := json.Marshal(claudeReq)
 	if err != nil {
 		returnPreConsumedQuota(c, relayInfo, userQuota, preConsumedQuota)
-		return service.OpenAIErrorWrapperLocal(err, "json_marshal_failed", http.StatusInternalServerError)
+		writeClaudeMaybeStreamError(c, relayInfo, http.StatusInternalServerError, "api_error", err.Error())
+		return nil
 	}
 
 	resp, err := adaptor.DoRequest(c, relayInfo, bytes.NewBuffer(jsonData))
 	if err != nil {
 		returnPreConsumedQuota(c, relayInfo, userQuota, preConsumedQuota)
-		return service.OpenAIErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
+		writeClaudeMaybeStreamError(c, relayInfo, http.StatusInternalServerError, "api_error", err.Error())
+		return nil
 	}
 
 	httpResp := resp.(*http.Response)
@@ -131,9 +138,10 @@ func ClaudeCodeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithSta
 		returnPreConsumedQuota(c, relayInfo, userQuota, preConsumedQuota)
 		// 客户端中断连接（broken pipe / connection reset）不应视为渠道失败，避免误报与误禁用
 		if common.IsClientDisconnectError(err) {
-			return service.OpenAIErrorWrapperLocal(err, "client_disconnected", 499)
+			return nil
 		}
-		return service.OpenAIErrorWrapper(err, "claude_code_passthrough_failed", http.StatusInternalServerError)
+		writeClaudeMaybeStreamError(c, relayInfo, http.StatusInternalServerError, "api_error", err.Error())
+		return nil
 	}
 
 	postConsumeQuota(c, relayInfo, claudeReq.Model, usage, ratio, preConsumedQuota, userQuota, modelRatio, groupRatio, modelPrice, getModelPriceSuccess, "")
@@ -196,6 +204,7 @@ func streamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *rela
 
 	usage := &dto.Usage{}
 	var responseText strings.Builder
+	sawAnyEvent := false
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
@@ -219,6 +228,7 @@ func streamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *rela
 		if err := json.Unmarshal([]byte(data), &claudeResp); err != nil {
 			continue
 		}
+		sawAnyEvent = true
 		if claudeResp.Type == "message_start" && claudeResp.Message != nil {
 			info.UpstreamModelName = claudeResp.Message.Model
 			usage.PromptTokens = claudeResp.Message.Usage.InputTokens
@@ -231,6 +241,10 @@ func streamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *rela
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
+	}
+	// 流式响应结束但没有任何有效事件：通常是上游异常断流，避免客户端“无输出/静默”。
+	if !sawAnyEvent {
+		return nil, io.ErrUnexpectedEOF
 	}
 
 	if usage.PromptTokens == 0 {
@@ -359,4 +373,52 @@ func writeClaudeError(c *gin.Context, status int, errType, message string) {
 			"message": message,
 		},
 	})
+}
+
+func writeClaudeMaybeStreamError(c *gin.Context, info *relaycommon.RelayInfo, status int, errType, message string) {
+	if c == nil || c.Writer.Written() {
+		return
+	}
+	if info != nil && info.IsStream {
+		service.SetEventStreamHeaders(c)
+		c.Writer.WriteHeader(http.StatusOK)
+		payload := map[string]any{
+			"type": "error",
+			"error": map[string]any{
+				"type":    errType,
+				"message": message,
+			},
+		}
+		b, _ := json.Marshal(payload)
+		_, _ = c.Writer.Write([]byte("event: error\n"))
+		_, _ = c.Writer.Write([]byte("data: " + string(b) + "\n\n"))
+		if f, ok := c.Writer.(http.Flusher); ok {
+			f.Flush()
+		}
+		return
+	}
+	writeClaudeError(c, status, errType, message)
+}
+
+func mapOpenAIErrorTypeToClaude(t string) string {
+	tt := strings.TrimSpace(t)
+	if tt == "" {
+		return "api_error"
+	}
+	switch tt {
+	case "invalid_request_error":
+		return "invalid_request_error"
+	case "authentication_error":
+		return "authentication_error"
+	case "permission_error":
+		return "permission_error"
+	case "not_found_error":
+		return "not_found_error"
+	case "rate_limit_error", "rate_limit_exceeded", "usage_limit_reached":
+		return "rate_limit_error"
+	case "overloaded_error":
+		return "overloaded_error"
+	default:
+		return "api_error"
+	}
 }
