@@ -42,9 +42,11 @@ func codexCLIPassthroughStreamHandler(c *gin.Context, resp *http.Response, info 
 
 	var outputText strings.Builder
 	var usage *dto.Usage
-	var sawCompleted bool
+	var sawResponseCompleted bool
+	var sawFailedOrError bool
 	var sawDone bool
 	var responseID string
+	var terminalErr map[string]any
 	isFirst := true
 	evtLogN := 0
 	var readErr error
@@ -61,11 +63,15 @@ func codexCLIPassthroughStreamHandler(c *gin.Context, resp *http.Response, info 
 				payload := bytes.TrimSpace(bytes.TrimPrefix(trimmed, []byte("data:")))
 				if bytes.Equal(payload, []byte("[DONE]")) {
 					sawDone = true
-					if !sawCompleted {
+					if !sawResponseCompleted {
 						// 某些镜像站仅发送 [DONE] 不发送 response.completed，Codex CLI 会报 “stream closed before response.completed”
 						codexCLILogLine(c, info, "inject_completed=done_without_completed")
-						_ = writeSyntheticResponseCompleted(c, responseID, info, usage, outputText.String())
-						sawCompleted = true
+						status := "completed"
+						if sawFailedOrError {
+							status = "failed"
+						}
+						_ = writeSyntheticResponseCompletedWithStatus(c, responseID, info, usage, outputText.String(), status, terminalErr)
+						sawResponseCompleted = true
 					}
 					// 再把上游的 [DONE] 原样写回
 					_, _ = c.Writer.Write(line)
@@ -99,9 +105,22 @@ func codexCLIPassthroughStreamHandler(c *gin.Context, resp *http.Response, info 
 								outputText.WriteString(delta)
 							}
 						case "response.completed":
-							sawCompleted = true
+							sawResponseCompleted = true
 							if usage == nil {
 								usage = parseUsageFromResponseCompleted(evt)
+							}
+						case "response.failed":
+							// 注意：上游失败时通常不会再发送 response.completed。
+							// 这里标记失败，避免 EOF 时注入“成功 completed”覆盖错误，导致客户端静默。
+							sawFailedOrError = true
+							if e := extractErrorObjectFromEvent(evt); e != nil {
+								terminalErr = e
+							}
+						case "error":
+							// OpenAI Responses SSE 可能直接下发 type=error
+							sawFailedOrError = true
+							if e, ok := evt["error"].(map[string]any); ok && len(e) > 0 {
+								terminalErr = e
 							}
 						}
 					}
@@ -123,10 +142,14 @@ func codexCLIPassthroughStreamHandler(c *gin.Context, resp *http.Response, info 
 	if readErr != nil {
 		codexCLILogLine(c, info, fmt.Sprintf("upstream_read_error=%v", readErr))
 	}
-	if !sawCompleted {
+	if !sawResponseCompleted {
 		codexCLILogLine(c, info, "inject_completed=eof_without_completed")
-		_ = writeSyntheticResponseCompleted(c, responseID, info, usage, outputText.String())
-		sawCompleted = true
+		status := "completed"
+		if sawFailedOrError {
+			status = "failed"
+		}
+		_ = writeSyntheticResponseCompletedWithStatus(c, responseID, info, usage, outputText.String(), status, terminalErr)
+		sawResponseCompleted = true
 	}
 	if !sawDone {
 		codexCLILogLine(c, info, "inject_done=eof_without_done")
@@ -159,6 +182,40 @@ func codexCLIPassthroughHandler(c *gin.Context, resp *http.Response, info *relay
 	service.SetEventStreamHeaders(c)
 	c.Writer.WriteHeader(http.StatusOK)
 
+	// 若上游返回的是错误 JSON（常见于 4xx/5xx），转换为 SSE 错误事件，避免 Codex CLI “无输出/静默中断”。
+	if openaiErr := tryParseOpenAIErrorFromBody(body, resp); openaiErr != nil {
+		if errObj := openaiErrToErrorObject(openaiErr); errObj != nil {
+			evt := map[string]any{
+				"type":  "error",
+				"error": errObj,
+			}
+			b, _ := json.Marshal(evt)
+			_, _ = c.Writer.Write([]byte("data: " + string(b) + "\n\n"))
+			if f, ok := c.Writer.(http.Flusher); ok {
+				f.Flush()
+			}
+			failed := map[string]any{
+				"type": "response.failed",
+				"response": map[string]any{
+					"id":     "resp_" + common.GetUUID(),
+					"status": "failed",
+					"error":  errObj,
+				},
+			}
+			b2, _ := json.Marshal(failed)
+			_, _ = c.Writer.Write([]byte("data: " + string(b2) + "\n\n"))
+			if f, ok := c.Writer.(http.Flusher); ok {
+				f.Flush()
+			}
+			_ = writeSyntheticResponseCompletedWithStatus(c, "", info, &dto.Usage{PromptTokens: 0, CompletionTokens: 0, TotalTokens: 0}, "", "failed", errObj)
+			_, _ = c.Writer.Write([]byte("data: [DONE]\n\n"))
+			if f, ok := c.Writer.(http.Flusher); ok {
+				f.Flush()
+			}
+			return nil, &dto.Usage{PromptTokens: 0, CompletionTokens: 0, TotalTokens: 0}
+		}
+	}
+
 	// 尝试把上游 body 解析成可用文本（兼容 chat.completions / responses / SSE 聚合）
 	text := ""
 	if s := extractTextFromBody(body); s != "" {
@@ -180,7 +237,7 @@ func codexCLIPassthroughHandler(c *gin.Context, resp *http.Response, info *relay
 	if u == nil {
 		u, _ = service.ResponseText2Usage(text, info.UpstreamModelName, info.PromptTokens)
 	}
-	_ = writeSyntheticResponseCompleted(c, "", info, u, text)
+	_ = writeSyntheticResponseCompletedWithStatus(c, "", info, u, text, "completed", nil)
 	_, _ = c.Writer.Write([]byte("data: [DONE]\n\n"))
 	if f, ok := c.Writer.(http.Flusher); ok {
 		f.Flush()
@@ -263,6 +320,10 @@ func intFromAny(v any) int {
 }
 
 func writeSyntheticResponseCompleted(c *gin.Context, responseID string, info *relaycommon.RelayInfo, usage *dto.Usage, outputText string) error {
+	return writeSyntheticResponseCompletedWithStatus(c, responseID, info, usage, outputText, "completed", nil)
+}
+
+func writeSyntheticResponseCompletedWithStatus(c *gin.Context, responseID string, info *relaycommon.RelayInfo, usage *dto.Usage, outputText string, status string, responseErr map[string]any) error {
 	if c == nil {
 		return nil
 	}
@@ -272,17 +333,26 @@ func writeSyntheticResponseCompleted(c *gin.Context, responseID string, info *re
 	if usage == nil {
 		usage, _ = service.ResponseText2Usage(outputText, info.UpstreamModelName, info.PromptTokens)
 	}
+	st := strings.TrimSpace(status)
+	if st == "" {
+		st = "completed"
+	}
 	payload := map[string]any{
 		"type": "response.completed",
 		"response": map[string]any{
 			"id":     responseID,
-			"status": "completed",
+			"status": st,
 			"usage": map[string]any{
 				"input_tokens":  usage.PromptTokens,
 				"output_tokens": usage.CompletionTokens,
 				"total_tokens":  usage.TotalTokens,
 			},
 		},
+	}
+	if responseErr != nil && len(responseErr) > 0 {
+		if respObj, ok := payload["response"].(map[string]any); ok {
+			respObj["error"] = responseErr
+		}
 	}
 	b, _ := json.Marshal(payload)
 	_, err := c.Writer.Write([]byte("data: " + string(b) + "\n\n"))
@@ -419,4 +489,78 @@ func extractTextFromBody(body []byte) string {
 		s = s[:500]
 	}
 	return s
+}
+
+func extractErrorObjectFromEvent(evt map[string]any) map[string]any {
+	if evt == nil {
+		return nil
+	}
+	// responses: response.failed 的 error 往往在 response.error
+	if r, ok := evt["response"].(map[string]any); ok {
+		if e, ok := r["error"].(map[string]any); ok && len(e) > 0 {
+			return e
+		}
+	}
+	// 有些实现把 error 放在顶层
+	if e, ok := evt["error"].(map[string]any); ok && len(e) > 0 {
+		return e
+	}
+	return nil
+}
+
+func tryParseOpenAIErrorFromBody(body []byte, resp *http.Response) *dto.OpenAIErrorWithStatusCode {
+	b := bytes.TrimSpace(body)
+	if len(b) == 0 {
+		return nil
+	}
+	// 标准：{"error": {...}}
+	var gen dto.GeneralErrorResponse
+	if json.Unmarshal(b, &gen) != nil {
+		return nil
+	}
+	msg := strings.TrimSpace(gen.ToMessage())
+	if msg == "" && strings.TrimSpace(gen.Error.Type) == "" && gen.Error.Code == nil && strings.TrimSpace(gen.Error.Param) == "" {
+		return nil
+	}
+	status := 0
+	if resp != nil {
+		status = resp.StatusCode
+	}
+	if status <= 0 {
+		status = http.StatusBadGateway
+	}
+	e := gen.Error
+	if strings.TrimSpace(e.Message) == "" && msg != "" {
+		e.Message = msg
+	}
+	if strings.TrimSpace(e.Type) == "" {
+		e.Type = "upstream_error"
+	}
+	return &dto.OpenAIErrorWithStatusCode{
+		Error:      e,
+		StatusCode: status,
+		LocalError: false,
+	}
+}
+
+func openaiErrToErrorObject(e *dto.OpenAIErrorWithStatusCode) map[string]any {
+	if e == nil {
+		return nil
+	}
+	msg := strings.TrimSpace(e.Error.Message)
+	typ := strings.TrimSpace(e.Error.Type)
+	if typ == "" {
+		typ = "upstream_error"
+	}
+	obj := map[string]any{
+		"message": msg,
+		"type":    typ,
+	}
+	if strings.TrimSpace(e.Error.Param) != "" {
+		obj["param"] = e.Error.Param
+	}
+	if e.Error.Code != nil {
+		obj["code"] = e.Error.Code
+	}
+	return obj
 }
