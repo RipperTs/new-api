@@ -78,6 +78,47 @@ function safeParseJSON(str) {
   }
 }
 
+function getRelatedModelsByType(type) {
+  switch (type) {
+    case 2:
+      return [
+        'mj_imagine',
+        'mj_variation',
+        'mj_reroll',
+        'mj_blend',
+        'mj_upscale',
+        'mj_describe',
+        'mj_uploads'
+      ];
+    case 5:
+      return [
+        'swap_face',
+        'mj_imagine',
+        'mj_variation',
+        'mj_reroll',
+        'mj_blend',
+        'mj_upscale',
+        'mj_describe',
+        'mj_zoom',
+        'mj_shorten',
+        'mj_modal',
+        'mj_inpaint',
+        'mj_custom_zoom',
+        'mj_high_variation',
+        'mj_low_variation',
+        'mj_pan',
+        'mj_uploads'
+      ];
+    case 36:
+      return [
+        'suno_music',
+        'suno_lyrics'
+      ];
+    default:
+      return getChannelModels(type);
+  }
+}
+
 const EditChannel = (props) => {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -184,56 +225,17 @@ const EditChannel = (props) => {
     updateRows(next);
   };
   const handleInputChange = (name, value) => {
-    setInputs((inputs) => ({ ...inputs, [name]: value }));
     if (name === 'type') {
-      let localModels = [];
-      switch (value) {
-        case 2:
-          localModels = [
-            'mj_imagine',
-            'mj_variation',
-            'mj_reroll',
-            'mj_blend',
-            'mj_upscale',
-            'mj_describe',
-            'mj_uploads'
-          ];
-          break;
-        case 5:
-          localModels = [
-            'swap_face',
-            'mj_imagine',
-            'mj_variation',
-            'mj_reroll',
-            'mj_blend',
-            'mj_upscale',
-            'mj_describe',
-            'mj_zoom',
-            'mj_shorten',
-            'mj_modal',
-            'mj_inpaint',
-            'mj_custom_zoom',
-            'mj_high_variation',
-            'mj_low_variation',
-            'mj_pan',
-            'mj_uploads'
-          ];
-          break;
-        case 36:
-          localModels = [
-            'suno_music',
-            'suno_lyrics'
-          ];
-          break;
-        default:
-          localModels = getChannelModels(value);
-          break;
-      }
-      if (inputs.models.length === 0) {
-        setInputs((inputs) => ({ ...inputs, models: localModels }));
-      }
+      const localModels = getRelatedModelsByType(value);
       setBasicModels(localModels);
+      setInputs((prev) => {
+        const next = { ...prev, [name]: value };
+        if ((prev.models || []).length === 0) next.models = localModels;
+        return next;
+      });
+      return;
     }
+    setInputs((inputs) => ({ ...inputs, [name]: value }));
     //setAutoBan
   };
 
@@ -270,7 +272,7 @@ const EditChannel = (props) => {
       } else {
         setAutoBan(true);
       }
-      setBasicModels(getChannelModels(data.type));
+      setBasicModels(getRelatedModelsByType(data.type));
       // console.log(data);
     } else {
       showError(message);
@@ -643,13 +645,6 @@ const EditChannel = (props) => {
       }));
       setOriginModelOptions(localModelOptions);
       setFullModels(res.data.data.map((model) => model.id));
-      setBasicModels(
-        res.data.data
-          .filter((model) => {
-            return model.id.startsWith('gpt-') || model.id.startsWith('text-');
-          })
-          .map((model) => model.id)
-      );
     } catch (error) {
       showError(error.message);
     }
@@ -691,10 +686,9 @@ const EditChannel = (props) => {
     if (isEdit) {
       loadChannel().then(() => {});
     } else {
-      setInputs(originInputs);
-      let localModels = getChannelModels(inputs.type);
+      const localModels = getRelatedModelsByType(originInputs.type);
       setBasicModels(localModels);
-      setInputs((inputs) => ({ ...inputs, models: localModels }));
+      setInputs({ ...originInputs, models: localModels });
     }
   }, [props.editingChannel.id]);
 
