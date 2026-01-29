@@ -302,6 +302,21 @@ func CountTokenMessages(info *relaycommon.RelayInfo, messages []dto.Message, mod
 					} else if m.Type == dto.ContentTypeInputAudio {
 						// TODO: 音频token数量计算
 						tokenNum += 100
+					} else if m.Type == dto.ContentTypeFileData {
+						var fileURI string
+						switch v := m.FileData.(type) {
+						case dto.MessageFileData:
+							fileURI = v.FileUri
+						case map[string]any:
+							if s, ok := v["file_uri"].(string); ok {
+								fileURI = s
+							} else if s, ok := v["fileUri"].(string); ok {
+								fileURI = s
+							}
+						}
+						if fileURI != "" {
+							tokenNum += getTokenNum(tokenEncoder, fileURI)
+						}
 					} else {
 						tokenNum += getTokenNum(tokenEncoder, m.Text)
 					}

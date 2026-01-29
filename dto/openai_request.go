@@ -103,6 +103,7 @@ type MediaContent struct {
 	Text       string `json:"text"`
 	ImageUrl   any    `json:"image_url,omitempty"`
 	InputAudio any    `json:"input_audio,omitempty"`
+	FileData   any    `json:"file_data,omitempty"`
 }
 
 type MessageImageUrl struct {
@@ -115,10 +116,18 @@ type MessageInputAudio struct {
 	Format string `json:"format"`
 }
 
+// MessageFileData 用于兼容 Gemini 的 file_data/file_uri 输入（例如 YouTube URL）。
+// 注意：该字段并非 OpenAI 官方 Chat Completions 的标准字段，仅用于本项目的可选扩展。
+type MessageFileData struct {
+	FileUri  string `json:"file_uri"`
+	MimeType string `json:"mime_type,omitempty"`
+}
+
 const (
 	ContentTypeText       = "text"
 	ContentTypeImageURL   = "image_url"
 	ContentTypeInputAudio = "input_audio"
+	ContentTypeFileData   = "file_data"
 )
 
 func (m *Message) ParseToolCalls() []ToolCall {
@@ -227,6 +236,35 @@ func (m *Message) ParseContent() []MediaContent {
 							Data:   subObj["data"].(string),
 							Format: subObj["format"].(string),
 						},
+					})
+				}
+			case ContentTypeFileData:
+				// 兼容两种写法：
+				// 1) {"type":"file_data","file_data":{"file_uri":"...","mime_type":"..."}}
+				// 2) {"type":"file_data","file_data":"..."} 或 {"type":"file_data","file_uri":"..."}
+				fd := MessageFileData{}
+				if subObj, ok := contentMap["file_data"].(map[string]any); ok {
+					if s, ok := subObj["file_uri"].(string); ok {
+						fd.FileUri = s
+					} else if s, ok := subObj["fileUri"].(string); ok {
+						fd.FileUri = s
+					}
+					if s, ok := subObj["mime_type"].(string); ok {
+						fd.MimeType = s
+					} else if s, ok := subObj["mimeType"].(string); ok {
+						fd.MimeType = s
+					}
+				} else if s, ok := contentMap["file_data"].(string); ok {
+					fd.FileUri = s
+				} else if s, ok := contentMap["file_uri"].(string); ok {
+					fd.FileUri = s
+				} else if s, ok := contentMap["fileUri"].(string); ok {
+					fd.FileUri = s
+				}
+				if fd.FileUri != "" {
+					contentList = append(contentList, MediaContent{
+						Type:     ContentTypeFileData,
+						FileData: fd,
 					})
 				}
 			}

@@ -215,6 +215,34 @@ func CovertGemini2OpenAI(textRequest dto.GeneralOpenAIRequest) (*GeminiChatReque
 						},
 					})
 				}
+			} else if part.Type == dto.ContentTypeFileData {
+				var fileData dto.MessageFileData
+				switch v := part.FileData.(type) {
+				case dto.MessageFileData:
+					fileData = v
+				case map[string]any:
+					if s, ok := v["file_uri"].(string); ok {
+						fileData.FileUri = s
+					} else if s, ok := v["fileUri"].(string); ok {
+						fileData.FileUri = s
+					}
+					if s, ok := v["mime_type"].(string); ok {
+						fileData.MimeType = s
+					} else if s, ok := v["mimeType"].(string); ok {
+						fileData.MimeType = s
+					}
+				}
+
+				fileData.FileUri = strings.TrimSpace(fileData.FileUri)
+				if fileData.FileUri == "" {
+					continue
+				}
+				parts = append(parts, GeminiPart{
+					FileData: &GeminiFileData{
+						MimeType: strings.TrimSpace(fileData.MimeType),
+						FileUri:  fileData.FileUri,
+					},
+				})
 			}
 		}
 
