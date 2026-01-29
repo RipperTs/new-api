@@ -273,6 +273,11 @@ func WriteCodexCLIErrorSSE(c *gin.Context, message string) {
 	c.Writer.WriteHeader(http.StatusOK)
 
 	msg := strings.TrimSpace(message)
+	// 只对“网络/转发层失败”做脱敏，业务错误（如参数错误/权限）仍原样透传给用户。
+	// message 一般已经带了 (request id: xxx)，这里保留该后缀方便排查。
+	if common.IsUpstreamTransportFailureMessage(msg) || strings.Contains(strings.ToLower(msg), "internal_error") {
+		msg = "上游服务暂时不可用，请稍后重试" + extractRequestIDSuffix(msg)
+	}
 	if msg != "" {
 		evt := map[string]any{"type": "response.output_text.delta", "delta": msg}
 		b, _ := json.Marshal(evt)
@@ -305,6 +310,18 @@ func WriteCodexCLIErrorSSE(c *gin.Context, message string) {
 	if f, ok := c.Writer.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+func extractRequestIDSuffix(msg string) string {
+	s := strings.TrimSpace(msg)
+	if s == "" {
+		return ""
+	}
+	// common.MessageWithRequestId 的格式："... (request id: xxx)"
+	if i := strings.LastIndex(s, " (request id:"); i >= 0 {
+		return s[i:]
+	}
+	return ""
 }
 
 func codexCLIDebugEnabled(c *gin.Context, info *relaycommon.RelayInfo) bool {

@@ -191,7 +191,8 @@ func codexCLIPassthroughStreamHandler(c *gin.Context, resp *http.Response, info 
 			if c != nil {
 				reqID = c.GetString(common.RequestIdKey)
 			}
-			msg := common.MessageWithRequestId(fmt.Sprintf("upstream stream error: %v", readErr), reqID)
+			// 对用户只给通用提示（避免暴露 HTTP/2 INTERNAL_ERROR 等底层细节），详细原因留在服务端日志里。
+			msg := common.MessageWithRequestId("上游流式连接异常中断，请稍后重试", reqID)
 			terminalErr = map[string]any{
 				"message": msg,
 				"type":    "upstream_stream_error",
