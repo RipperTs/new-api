@@ -251,7 +251,7 @@ func writeCodexCLIResponseCompleted(c *gin.Context, responseID string, usage *dt
 		},
 	}
 	b, _ := json.Marshal(payload)
-	_, err := c.Writer.Write([]byte("data: " + string(b) + "\n\n"))
+	_, err := c.Writer.Write([]byte("event: response.completed\n" + "data: " + string(b) + "\n\n"))
 	if f, ok := c.Writer.(http.Flusher); ok {
 		f.Flush()
 	}
@@ -274,12 +274,9 @@ func WriteCodexCLIErrorSSE(c *gin.Context, message string) {
 
 	msg := strings.TrimSpace(message)
 	if msg != "" {
-		evt := map[string]any{
-			"type":  "response.output_text.delta",
-			"delta": msg,
-		}
+		evt := map[string]any{"type": "response.output_text.delta", "delta": msg}
 		b, _ := json.Marshal(evt)
-		_, _ = c.Writer.Write([]byte("data: " + string(b) + "\n\n"))
+		_, _ = c.Writer.Write([]byte("event: response.output_text.delta\n" + "data: " + string(b) + "\n\n"))
 		if f, ok := c.Writer.(http.Flusher); ok {
 			f.Flush()
 		}
@@ -298,7 +295,7 @@ func WriteCodexCLIErrorSSE(c *gin.Context, message string) {
 		},
 	}
 	b, _ := json.Marshal(failed)
-	_, _ = c.Writer.Write([]byte("data: " + string(b) + "\n\n"))
+	_, _ = c.Writer.Write([]byte("event: response.failed\n" + "data: " + string(b) + "\n\n"))
 	if f, ok := c.Writer.(http.Flusher); ok {
 		f.Flush()
 	}
