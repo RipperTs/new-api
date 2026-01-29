@@ -97,4 +97,15 @@ services:
     restart: always
 ```
 
+## 📦 发布 Release
+
+已配置 GitHub Actions：推送 tag 后会自动构建并发布 Release，且版本号会同时写入：
+- 后端：`one-api/common.Version`
+- 前端：`VITE_REACT_APP_VERSION`
+
+发布方式（推荐语义化版本）：
+```bash
+git tag v1.2.3
+git push origin v1.2.3
+```
 

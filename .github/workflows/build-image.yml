@@ -40,6 +40,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set version (write VERSION)
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(bash scripts/ci/version.sh)"
+          echo "${version}" > VERSION
+          echo "VERSION=${version}"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
