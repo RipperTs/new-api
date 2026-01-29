@@ -77,13 +77,18 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	// 2) apic1.ohmycdn.com/.../v1 -> /responses
 	path := "/codex/responses"
 	base := info.BaseUrl
-	if strings.HasSuffix(base, "/v1") || strings.HasSuffix(base, "/v1/") {
+	baseTrim := strings.TrimRight(strings.TrimSpace(base), "/")
+	if strings.HasSuffix(baseTrim, "/v1") {
 		path = "/responses"
-	} else if strings.HasSuffix(base, "/codex") || strings.HasSuffix(base, "/codex/") {
+	} else if strings.HasSuffix(baseTrim, "/codex") {
 		// 官方：https://chatgpt.com/backend-api/codex -> /responses
 		path = "/responses"
 	}
-	return relaycommon.GetFullRequestURL(base, path, info.ChannelType), nil
+
+	// 透传 /v1/responses 的子路径（例如 /v1/responses/compact）
+	// 同时兼容 /v1/codex-cli/responses/*（base_url=/v1/codex-cli 时 Codex CLI 会这样请求）。
+	suffix := extractResponsesSuffixFromRequestURLPath(info.RequestURLPath)
+	return relaycommon.GetFullRequestURL(base, path+suffix, info.ChannelType), nil
 }
 
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *relaycommon.RelayInfo) error {
@@ -111,8 +116,13 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *
 	header.Set("OpenAI-Beta", "responses=experimental")
 	header.Set("Openai-Beta", "responses=experimental")
 	header.Set("openai-beta", "responses=experimental")
-	// SSE / JSON：多数场景都用 SSE（包括非流式聚合），但 Responses API 非流式尽量按 JSON 拉取。
-	if info != nil && info.RelayMode == constant.RelayModeResponses && !info.IsStream {
+
+	// SSE / JSON：
+	// - /responses/compact：规范为非流式 JSON（Codex CLI 也会调用），这里强制按 JSON 拉取。
+	// - /responses：非流式尽量按 JSON 拉取；其它场景默认按 SSE。
+	if isResponsesCompactPath(c.Request.URL.Path) {
+		header.Set("Accept", "application/json")
+	} else if info != nil && info.RelayMode == constant.RelayModeResponses && !info.IsStream {
 		header.Set("Accept", "application/json")
 	} else {
 		header.Set("Accept", "text/event-stream")
@@ -173,8 +183,17 @@ func (a *Adaptor) ConvertResponsesRequest(c *gin.Context, info *relaycommon.Rela
 	// 兼容用户用 OpenAI Responses 习惯传 input="..." 的写法。
 	normalizeCodexResponsesInput(upstream)
 
-	// Codex 上游要求显式传 store=false（若省略会报 “Store must be set to false”）
-	upstream["store"] = false
+	// /responses/compact：规范为非流式 JSON；避免透传 stream/store 导致上游报 Unsupported parameter。
+	if isResponsesCompactPath(c.Request.URL.Path) {
+		delete(upstream, "stream")
+		delete(upstream, "store")
+	}
+
+	// /responses：Codex 上游要求显式传 store=false（若省略会报 “Store must be set to false”）
+	// /responses/compact：规范不包含 store 字段，避免注入导致上游报 Unsupported parameter。
+	if !isResponsesCompactPath(c.Request.URL.Path) {
+		upstream["store"] = false
+	}
 
 	base := ""
 	if info != nil {
@@ -214,6 +233,35 @@ func (a *Adaptor) ConvertResponsesRequest(c *gin.Context, info *relaycommon.Rela
 		return nil, err
 	}
 	return json.RawMessage(b), nil
+}
+
+func isResponsesCompactPath(path string) bool {
+	// /v1/responses/compact 或 /v1/codex-cli/responses/compact
+	return strings.HasSuffix(strings.TrimSpace(path), "/responses/compact")
+}
+
+func extractResponsesSuffixFromRequestURLPath(requestURLPath string) string {
+	p := strings.TrimSpace(requestURLPath)
+	if i := strings.Index(p, "?"); i >= 0 {
+		p = p[:i]
+	}
+	// /v1/responses/compact -> /compact
+	if strings.HasPrefix(p, "/v1/responses") {
+		return strings.TrimPrefix(p, "/v1/responses")
+	}
+	// /v1/codex-cli/responses/compact -> /compact
+	if strings.HasPrefix(p, "/v1/codex-cli") {
+		rest := strings.TrimPrefix(p, "/v1/codex-cli")
+		// /v1/codex-cli -> ""（默认即 /responses）
+		if rest == "" || rest == "/" {
+			return ""
+		}
+		if strings.HasPrefix(rest, "/responses") {
+			return strings.TrimPrefix(rest, "/responses")
+		}
+		return rest
+	}
+	return ""
 }
 
 func cloneMapStringAny(src map[string]any) map[string]any {
