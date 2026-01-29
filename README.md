@@ -1,3 +1,5 @@
+<div align="center">  
+
 ![new-api](/web/public/logo.png)
 
 # New API
