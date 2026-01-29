@@ -46,6 +46,11 @@ func ResponsesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) 
 		}
 	}
 
+	// /responses/compact 规范为非流式 JSON；即使客户端误传 stream，也不透传，避免上游报不支持/返回格式不一致。
+	isCompact := strings.HasSuffix(strings.TrimSpace(c.Request.URL.Path), "/responses/compact")
+	if isCompact {
+		delete(requestMap, "stream")
+	}
 	stream, _ := requestMap["stream"].(bool)
 	relayInfo.IsStream = stream
 

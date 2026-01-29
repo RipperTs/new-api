@@ -41,12 +41,21 @@ func CodexCLIHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) {
 		return service.OpenAIErrorWrapperLocal(errors.New("model is required"), "model_required", http.StatusBadRequest)
 	}
 
-	// Codex CLI 默认走 SSE；如果未显式指定，强制开启，避免上游不返回完成事件
-	if _, ok := requestMap["stream"]; !ok {
-		requestMap["stream"] = true
+	isCompact := strings.HasSuffix(strings.TrimSpace(c.Request.URL.Path), "/responses/compact")
+	if isCompact {
+		// /responses/compact 规范为非流式 JSON；同时把 RelayMode 改为 Responses，确保 DoResponse 走 JSON passthrough。
+		relayInfo.RelayMode = relayconstant.RelayModeResponses
+		// 避免旧客户端/调用方带入 stream/store 导致上游报 Unsupported parameter。
+		delete(requestMap, "stream")
+		delete(requestMap, "store")
+	} else {
+		// Codex CLI 默认走 SSE；如果未显式指定，强制开启，避免上游不返回完成事件
+		if _, ok := requestMap["stream"]; !ok {
+			requestMap["stream"] = true
+		}
+		// Codex 上游要求显式传 store=false（若省略会报 “Store must be set to false”）
+		requestMap["store"] = false
 	}
-	// Codex 上游要求显式传 store=false（若省略会报 “Store must be set to false”）
-	requestMap["store"] = false
 
 	// chatgpt backend-api 的 Codex 接口不支持部分参数（参照 CLIProxyAPI）
 	base := strings.TrimRight(strings.TrimSpace(relayInfo.BaseUrl), "/")

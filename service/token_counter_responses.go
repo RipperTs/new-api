@@ -84,6 +84,13 @@ func ResponsesRequestToMessages(request map[string]any) ([]dto.Message, error) {
 				continue
 			}
 			t, _ := itemMap["type"].(string)
+			// OpenAI Responses 允许 message item 省略 type（仅包含 role/content）
+			if t == "" {
+				if m, ok := buildChatMessageFromResponsesMessageItem(itemMap); ok {
+					messages = append(messages, m)
+					continue
+				}
+			}
 			switch t {
 			case "message":
 				m, ok := buildChatMessageFromResponsesMessageItem(itemMap)

@@ -38,6 +38,7 @@ func SetRelayRouter(router *gin.Engine) {
 		httpRouter.POST("/chat/completions", controller.Relay)
 		httpRouter.POST("/messages", controller.Relay)
 		httpRouter.POST("/responses", controller.Relay)
+		httpRouter.POST("/responses/compact", controller.Relay)
 		httpRouter.POST("/codex-cli", controller.Relay)
 		// Codex CLI 实际会请求 /responses 等子路径（base_url=/v1/codex-cli）
 		httpRouter.POST("/codex-cli/*path", controller.Relay)
