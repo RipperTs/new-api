@@ -97,18 +97,4 @@ services:
     restart: always
 ```
 
-## API特别说明
-### 兼容 Gemini 的视频理解
-“OpenAI 风格”的 /v1/chat/completions 这样传（务必走 Gemini 渠道/模型）：
-```json
-  {
-    "model": "gemini-3-flash-preview",
-    "messages": [{
-      "role": "user",
-      "content": [
-        { "type": "text", "text": "Please summarize the video in 3 sentences." },
-        { "type": "file_data", "file_data": { "file_uri": "https://www.youtube.com/watch?v=9hE5-98ZeCg" } }
-      ]
-    }]
-  }
-```
+
