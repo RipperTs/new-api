@@ -16,6 +16,7 @@ import (
 	relayconstant "one-api/relay/constant"
 	"one-api/service"
 	"one-api/setting"
+	"strconv"
 	"strings"
 )
 
@@ -104,11 +105,21 @@ func ClaudeCodeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithSta
 	}
 	adaptor.Init(relayInfo)
 
-	jsonData, err := json.Marshal(claudeReq)
+	// 注意：/v1/messages 请求体可能包含 thinking 等 beta 字段。
+	// 如果这里用 struct 反序列化再序列化，会丢失未知字段，导致上游出现 thinking signature 校验错误。
+	// 因此转发时尽量保留原始 JSON，仅在需要时替换 model。
+	jsonData, err := common.GetRequestBody(c)
 	if err != nil {
 		returnPreConsumedQuota(c, relayInfo, userQuota, preConsumedQuota)
 		writeClaudeMaybeStreamError(c, relayInfo, http.StatusInternalServerError, "api_error", err.Error())
 		return nil
+	}
+	var bodyMap map[string]json.RawMessage
+	if err := json.Unmarshal(jsonData, &bodyMap); err == nil {
+		bodyMap["model"] = []byte(strconv.Quote(claudeReq.Model))
+		if patched, err := json.Marshal(bodyMap); err == nil {
+			jsonData = patched
+		}
 	}
 
 	resp, err := adaptor.DoRequest(c, relayInfo, bytes.NewBuffer(jsonData))

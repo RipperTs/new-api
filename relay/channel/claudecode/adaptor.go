@@ -2,6 +2,7 @@ package claudecode
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/gin-gonic/gin"
@@ -10,8 +11,10 @@ import (
 	"one-api/dto"
 	"one-api/relay/channel"
 	relaycommon "one-api/relay/common"
+	relayconstant "one-api/relay/constant"
 	"one-api/service"
 	"strings"
+	"time"
 )
 
 const (
@@ -74,7 +77,14 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 	req.Set("x-stainless-helper-method", "stream")
 	req.Set("x-app", "cli")
 	req.Set("User-Agent", "claude-cli/1.0.44 (external, cli)")
-	req.Set("anthropic-beta", "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14")
+	// interleaved-thinking 会引入 thinking signature 校验。
+	// OpenAI 兼容模式下我们无法可靠透传 thinking block/signature，因此默认禁用；
+	// 仅在 Claude /v1/messages 原生请求时开启，保持与 Claude Code CLI 行为一致。
+	beta := "claude-code-20250219,oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14"
+	if !c.GetBool("claude_disable_interleaved_thinking") && info != nil && info.RelayMode == relayconstant.RelayModeClaudeMessages {
+		beta = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14"
+	}
+	req.Set("anthropic-beta", beta)
 	req.Set("X-Stainless-Runtime-Version", "v20.18.1")
 	req.Set("anthropic-dangerous-direct-browser-access", "true")
 	// 兼容验证要求的额外头
@@ -83,6 +93,56 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 	req.Set("sec-fetch-mode", "cors")
 
 	return nil
+}
+
+func stripThinkingBlocks(body []byte) []byte {
+	// 仅用于失败重试：移除 thinking/redacted_thinking block，避免 signature 校验导致 400。
+	var root map[string]any
+	if err := json.Unmarshal(body, &root); err != nil {
+		return body
+	}
+	delete(root, "thinking")
+
+	msgs, ok := root["messages"].([]any)
+	if !ok {
+		out, err := json.Marshal(root)
+		if err != nil {
+			return body
+		}
+		return out
+	}
+	for i := range msgs {
+		m, ok := msgs[i].(map[string]any)
+		if !ok {
+			continue
+		}
+		blocks, ok := m["content"].([]any)
+		if !ok {
+			continue
+		}
+		filtered := make([]any, 0, len(blocks))
+		for _, b := range blocks {
+			bm, ok := b.(map[string]any)
+			if !ok {
+				filtered = append(filtered, b)
+				continue
+			}
+			t, _ := bm["type"].(string)
+			if t == "thinking" || t == "redacted_thinking" {
+				continue
+			}
+			filtered = append(filtered, b)
+		}
+		m["content"] = filtered
+		msgs[i] = m
+	}
+	root["messages"] = msgs
+
+	out, err := json.Marshal(root)
+	if err != nil {
+		return body
+	}
+	return out
 }
 
 func (a *Adaptor) ConvertRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) (any, error) {
@@ -102,17 +162,46 @@ func (a *Adaptor) ConvertRerankRequest(c *gin.Context, relayMode int, request dt
 }
 
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
-	// 读取请求体内容用于日志输出
+	// 读取请求体，便于重试时重复发送（Claude Code 偶发返回 thinking signature 相关 400）。
 	bodyBytes, err := io.ReadAll(requestBody)
 	if err != nil {
 		fmt.Printf("[ClaudeCode] Error reading request body: %v\n", err)
 		return nil, err
 	}
 
-	// 重新创建 reader 供实际请求使用
-	newRequestBody := bytes.NewReader(bodyBytes)
+	doOnce := func() (*http.Response, error) {
+		return channel.DoApiRequest(a, c, info, bytes.NewReader(bodyBytes))
+	}
 
-	return channel.DoApiRequest(a, c, info, newRequestBody)
+	resp, err := doOnce()
+	if err != nil {
+		return nil, err
+	}
+	if resp != nil && resp.StatusCode == http.StatusBadRequest {
+		// 读取 body 判断是否为可重试的 thinking signature 错误；读完后恢复 body，避免影响后续错误处理逻辑。
+		b, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		resp.Body = io.NopCloser(bytes.NewReader(b))
+		if readErr == nil {
+			msg := strings.ToLower(string(b))
+			if strings.Contains(msg, "thinking signature has expired or is invalid") {
+				// 该错误可能是上游偶发，也可能是请求里携带了过期 signature。
+				// 重试时禁用 interleaved-thinking，并移除 thinking block，尽量做到“自动开新会话”效果。
+				time.Sleep(800 * time.Millisecond)
+				c.Set("claude_disable_interleaved_thinking", true)
+				retryBody := bodyBytes
+				if info != nil && info.RelayMode == relayconstant.RelayModeClaudeMessages {
+					retryBody = stripThinkingBlocks(bodyBytes)
+				}
+				resp2, err2 := channel.DoApiRequest(a, c, info, bytes.NewReader(retryBody))
+				if err2 == nil && resp2 != nil {
+					return resp2, nil
+				}
+				// 重试失败则返回首次响应，保留原始错误信息。
+			}
+		}
+	}
+	return resp, nil
 }
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *dto.OpenAIErrorWithStatusCode) {
