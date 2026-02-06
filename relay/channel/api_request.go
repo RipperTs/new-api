@@ -1,16 +1,21 @@
 package channel
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"one-api/relay/common"
 	"one-api/relay/constant"
 	"one-api/service"
+	"strings"
+
+	"golang.org/x/net/proxy"
 )
 
 func SetupApiRequestHeader(info *common.RelayInfo, c *gin.Context, req *http.Header) {
@@ -24,6 +29,59 @@ func SetupApiRequestHeader(info *common.RelayInfo, c *gin.Context, req *http.Hea
 		if info.IsStream && c.Request.Header.Get("Accept") == "" {
 			req.Set("Accept", "text/event-stream")
 		}
+	}
+}
+
+func newWssDialerWithProxy(proxyURL string) *websocket.Dialer {
+	d := *websocket.DefaultDialer
+
+	if proxyURL == "" {
+		return &d
+	}
+
+	u, err := url.Parse(proxyURL)
+	if err != nil {
+		return &d
+	}
+
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+		d.Proxy = http.ProxyURL(u)
+		return &d
+	case "socks5", "socks5h":
+		host := u.Host
+		if host == "" {
+			return &d
+		}
+
+		var auth *proxy.Auth
+		if u.User != nil {
+			user := u.User.Username()
+			pass, _ := u.User.Password()
+			if user != "" {
+				auth = &proxy.Auth{
+					User:     user,
+					Password: pass,
+				}
+			}
+		}
+
+		socksDialer, err := proxy.SOCKS5("tcp", host, auth, proxy.Direct)
+		if err != nil {
+			return &d
+		}
+
+		d.Proxy = nil
+		if cd, ok := socksDialer.(proxy.ContextDialer); ok {
+			d.NetDialContext = cd.DialContext
+		} else {
+			d.NetDialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return socksDialer.Dial(network, addr)
+			}
+		}
+		return &d
+	default:
+		return &d
 	}
 }
 
@@ -86,12 +144,7 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 
 	dialer := websocket.DefaultDialer
 	if info != nil && info.ProxyURL != "" {
-		proxyURLParsed, err := url.Parse(info.ProxyURL)
-		if err == nil {
-			dialer = &websocket.Dialer{
-				Proxy: http.ProxyURL(proxyURLParsed),
-			}
-		}
+		dialer = newWssDialerWithProxy(info.ProxyURL)
 	}
 
 	targetConn, _, err := dialer.Dial(fullRequestURL, targetHeader)
