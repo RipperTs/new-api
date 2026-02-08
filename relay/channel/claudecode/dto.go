@@ -15,7 +15,7 @@ type ClaudeMediaMessage struct {
 	Id        string `json:"id,omitempty"`
 	Name      string `json:"name,omitempty"`
 	Input     any    `json:"input,omitempty"`
-	Content   string `json:"content,omitempty"`
+	Content   any    `json:"content,omitempty"`
 	ToolUseId string `json:"tool_use_id,omitempty"`
 }
 
