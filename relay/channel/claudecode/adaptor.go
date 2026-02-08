@@ -161,6 +161,13 @@ func (a *Adaptor) ConvertRerankRequest(c *gin.Context, relayMode int, request dt
 	return nil, nil
 }
 
+func isThinkingSignatureError(msg string) bool {
+	m := strings.ToLower(msg)
+	return strings.Contains(m, "thinking signature has expired or is invalid") ||
+		strings.Contains(m, "invalid `signature` in `thinking` block") ||
+		strings.Contains(m, "invalid signature in thinking block")
+}
+
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
 	// 读取请求体，便于重试时重复发送（Claude Code 偶发返回 thinking signature 相关 400）。
 	bodyBytes, err := io.ReadAll(requestBody)
@@ -183,8 +190,8 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 		_ = resp.Body.Close()
 		resp.Body = io.NopCloser(bytes.NewReader(b))
 		if readErr == nil {
-			msg := strings.ToLower(string(b))
-			if strings.Contains(msg, "thinking signature has expired or is invalid") {
+			msg := string(b)
+			if isThinkingSignatureError(msg) {
 				// 该错误可能是上游偶发，也可能是请求里携带了过期 signature。
 				// 重试时禁用 interleaved-thinking，并移除 thinking block，尽量做到“自动开新会话”效果。
 				time.Sleep(800 * time.Millisecond)
