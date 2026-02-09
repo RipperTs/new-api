@@ -111,7 +111,40 @@ func increaseQuotaData(userId int, username string, modelName string, group stri
 	}
 }
 
-func GetQuotaDataByUsername(username string, startTime int64, endTime int64, group string) (quotaData []*QuotaData, err error) {
+func getLogQuotaBucketExpr() string {
+	if common.UsingPostgreSQL {
+		return "(logs.created_at / 3600) * 3600"
+	}
+	if common.UsingMySQL {
+		return "(logs.created_at DIV 3600) * 3600"
+	}
+	return "CAST(logs.created_at / 3600 AS INTEGER) * 3600"
+}
+
+func getQuotaDataByLogs(startTime int64, endTime int64, group string, tokenId int, appendCondition func(tx *gorm.DB) *gorm.DB) (quotaData []*QuotaData, err error) {
+	var quotaDatas []*QuotaData
+	bucketExpr := getLogQuotaBucketExpr()
+	tx := LOG_DB.Table("logs").Select("model_name, count(*) as count, sum(quota) as quota, sum(prompt_tokens + completion_tokens) as token_used, "+bucketExpr+" as created_at").
+		Where("type = ? and created_at >= ? and created_at <= ?", LogTypeConsume, startTime, endTime)
+	if appendCondition != nil {
+		tx = appendCondition(tx)
+	}
+	if group != "" {
+		tx = tx.Where(groupCol+" = ?", group)
+	}
+	if tokenId > 0 {
+		tx = tx.Where("token_id = ?", tokenId)
+	}
+	err = tx.Group("model_name, " + bucketExpr).Find(&quotaDatas).Error
+	return quotaDatas, err
+}
+
+func GetQuotaDataByUsername(username string, startTime int64, endTime int64, group string, tokenId int) (quotaData []*QuotaData, err error) {
+	if tokenId > 0 {
+		return getQuotaDataByLogs(startTime, endTime, group, tokenId, func(tx *gorm.DB) *gorm.DB {
+			return tx.Where("username = ?", username)
+		})
+	}
 	var quotaDatas []*QuotaData
 	tx := DB.Table("quota_data").Select("model_name, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used, created_at").
 		Where("username = ? and created_at >= ? and created_at <= ?", username, startTime, endTime)
@@ -122,7 +155,12 @@ func GetQuotaDataByUsername(username string, startTime int64, endTime int64, gro
 	return quotaDatas, err
 }
 
-func GetQuotaDataByUserId(userId int, startTime int64, endTime int64, group string) (quotaData []*QuotaData, err error) {
+func GetQuotaDataByUserId(userId int, startTime int64, endTime int64, group string, tokenId int) (quotaData []*QuotaData, err error) {
+	if tokenId > 0 {
+		return getQuotaDataByLogs(startTime, endTime, group, tokenId, func(tx *gorm.DB) *gorm.DB {
+			return tx.Where("user_id = ?", userId)
+		})
+	}
 	var quotaDatas []*QuotaData
 	tx := DB.Table("quota_data").Select("model_name, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used, created_at").
 		Where("user_id = ? and created_at >= ? and created_at <= ?", userId, startTime, endTime)
@@ -133,9 +171,12 @@ func GetQuotaDataByUserId(userId int, startTime int64, endTime int64, group stri
 	return quotaDatas, err
 }
 
-func GetAllQuotaDates(startTime int64, endTime int64, username string, group string) (quotaData []*QuotaData, err error) {
+func GetAllQuotaDates(startTime int64, endTime int64, username string, group string, tokenId int) (quotaData []*QuotaData, err error) {
 	if username != "" {
-		return GetQuotaDataByUsername(username, startTime, endTime, group)
+		return GetQuotaDataByUsername(username, startTime, endTime, group, tokenId)
+	}
+	if tokenId > 0 {
+		return getQuotaDataByLogs(startTime, endTime, group, tokenId, nil)
 	}
 	var quotaDatas []*QuotaData
 	// 从quota_data表中查询数据

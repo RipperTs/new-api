@@ -79,6 +79,11 @@ const TokensTable = () => {
 
   const columns = [
     {
+      title: 'ID',
+      dataIndex: 'id',
+      width: 90,
+    },
+    {
       title: '名称',
       dataIndex: 'name',
     },

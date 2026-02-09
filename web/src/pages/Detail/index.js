@@ -30,7 +30,7 @@ const Detail = (props) => {
   const [groupOptions, setGroupOptions] = useState([]);
   const [inputs, setInputs] = useState({
     username: '',
-    token_name: '',
+    token_id: '',
     model_name: '',
     group: '',
     start_timestamp:
@@ -43,7 +43,7 @@ const Detail = (props) => {
     channel: '',
     data_export_default_time: '',
   });
-  const { username, model_name, start_timestamp, end_timestamp, channel } =
+  const { username, model_name, start_timestamp, end_timestamp, channel, token_id } =
     inputs;
   const { group } = inputs;
   const isAdminUser = isAdmin();
@@ -230,9 +230,9 @@ const Detail = (props) => {
       let localStartTimestamp = Date.parse(start_timestamp) / 1000;
       let localEndTimestamp = Date.parse(end_timestamp) / 1000;
       if (isAdminUser) {
-        url = `/api/data/?username=${username}&group=${group}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&default_time=${dataExportDefaultTime}`;
+        url = `/api/data/?username=${username}&group=${group}&token_id=${token_id}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&default_time=${dataExportDefaultTime}`;
       } else {
-        url = `/api/data/self/?group=${group}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&default_time=${dataExportDefaultTime}`;
+        url = `/api/data/self/?group=${group}&token_id=${token_id}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&default_time=${dataExportDefaultTime}`;
       }
       const res = await API.get(url);
       const { success, message, data } = res.data;
@@ -485,6 +485,15 @@ const Detail = (props) => {
                   onChange={(value) => handleInputChange(value, 'group')}
                 />
               )}
+              <Form.Input
+                field='token_id'
+                label='令牌 ID'
+                style={{ width: 176 }}
+                value={token_id}
+                placeholder={'可选值'}
+                name='token_id'
+                onChange={(value) => handleInputChange(value, 'token_id')}
+              />
               {isAdminUser && (
                 <>
                   <Form.Input
