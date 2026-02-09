@@ -123,7 +123,14 @@ func getLogQuotaBucketExpr() string {
 	return "CAST(logs.created_at / 3600 AS INTEGER) * 3600"
 }
 
-func getQuotaDataByLogs(startTime int64, endTime int64, group string, tokenId int, appendCondition func(tx *gorm.DB) *gorm.DB) (quotaData []*QuotaData, err error) {
+func applyModelFilter(tx *gorm.DB, modelNames []string) *gorm.DB {
+	if len(modelNames) > 0 {
+		tx = tx.Where("model_name IN ?", modelNames)
+	}
+	return tx
+}
+
+func getQuotaDataByLogs(startTime int64, endTime int64, group string, tokenId int, modelNames []string, appendCondition func(tx *gorm.DB) *gorm.DB) (quotaData []*QuotaData, err error) {
 	var quotaDatas []*QuotaData
 	bucketExpr := getLogQuotaBucketExpr()
 	tx := LOG_DB.Table("logs").Select("model_name, count(*) as count, sum(quota) as quota, sum(prompt_tokens + completion_tokens) as token_used, sum(prompt_tokens) as prompt_tokens, sum(completion_tokens) as completion_tokens, "+bucketExpr+" as created_at").
@@ -137,13 +144,14 @@ func getQuotaDataByLogs(startTime int64, endTime int64, group string, tokenId in
 	if tokenId > 0 {
 		tx = tx.Where("token_id = ?", tokenId)
 	}
+	tx = applyModelFilter(tx, modelNames)
 	err = tx.Group("model_name, " + bucketExpr).Find(&quotaDatas).Error
 	return quotaDatas, err
 }
 
-func GetQuotaDataByUsername(username string, startTime int64, endTime int64, group string, tokenId int, usePromptCompletion bool) (quotaData []*QuotaData, err error) {
+func GetQuotaDataByUsername(username string, startTime int64, endTime int64, group string, tokenId int, usePromptCompletion bool, modelNames []string) (quotaData []*QuotaData, err error) {
 	if tokenId > 0 || usePromptCompletion {
-		return getQuotaDataByLogs(startTime, endTime, group, tokenId, func(tx *gorm.DB) *gorm.DB {
+		return getQuotaDataByLogs(startTime, endTime, group, tokenId, modelNames, func(tx *gorm.DB) *gorm.DB {
 			return tx.Where("username = ?", username)
 		})
 	}
@@ -153,13 +161,14 @@ func GetQuotaDataByUsername(username string, startTime int64, endTime int64, gro
 	if group != "" {
 		tx = tx.Where(groupCol+" = ?", group)
 	}
+	tx = applyModelFilter(tx, modelNames)
 	err = tx.Group("model_name, created_at").Find(&quotaDatas).Error
 	return quotaDatas, err
 }
 
-func GetQuotaDataByUserId(userId int, startTime int64, endTime int64, group string, tokenId int, usePromptCompletion bool) (quotaData []*QuotaData, err error) {
+func GetQuotaDataByUserId(userId int, startTime int64, endTime int64, group string, tokenId int, usePromptCompletion bool, modelNames []string) (quotaData []*QuotaData, err error) {
 	if tokenId > 0 || usePromptCompletion {
-		return getQuotaDataByLogs(startTime, endTime, group, tokenId, func(tx *gorm.DB) *gorm.DB {
+		return getQuotaDataByLogs(startTime, endTime, group, tokenId, modelNames, func(tx *gorm.DB) *gorm.DB {
 			return tx.Where("user_id = ?", userId)
 		})
 	}
@@ -169,16 +178,17 @@ func GetQuotaDataByUserId(userId int, startTime int64, endTime int64, group stri
 	if group != "" {
 		tx = tx.Where(groupCol+" = ?", group)
 	}
+	tx = applyModelFilter(tx, modelNames)
 	err = tx.Group("model_name, created_at").Find(&quotaDatas).Error
 	return quotaDatas, err
 }
 
-func GetAllQuotaDates(startTime int64, endTime int64, username string, group string, tokenId int, usePromptCompletion bool) (quotaData []*QuotaData, err error) {
+func GetAllQuotaDates(startTime int64, endTime int64, username string, group string, tokenId int, usePromptCompletion bool, modelNames []string) (quotaData []*QuotaData, err error) {
 	if username != "" {
-		return GetQuotaDataByUsername(username, startTime, endTime, group, tokenId, usePromptCompletion)
+		return GetQuotaDataByUsername(username, startTime, endTime, group, tokenId, usePromptCompletion, modelNames)
 	}
 	if tokenId > 0 || usePromptCompletion {
-		return getQuotaDataByLogs(startTime, endTime, group, tokenId, nil)
+		return getQuotaDataByLogs(startTime, endTime, group, tokenId, modelNames, nil)
 	}
 	var quotaDatas []*QuotaData
 	// 从quota_data表中查询数据
@@ -189,6 +199,7 @@ func GetAllQuotaDates(startTime int64, endTime int64, username string, group str
 	if group != "" {
 		tx = tx.Where(groupCol+" = ?", group)
 	}
+	tx = applyModelFilter(tx, modelNames)
 	err = tx.Group("model_name, created_at").Find(&quotaDatas).Error
 	return quotaDatas, err
 }

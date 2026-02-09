@@ -1,7 +1,7 @@
 import React, { useContext, useEffect, useRef, useState } from 'react';
 import { initVChartSemiTheme } from '@visactor/vchart-semi-theme';
 
-import { Button, Card, Col, Descriptions, Form, Input, Layout, Modal, Row, Spin, Switch, Tabs, Typography } from '@douyinfe/semi-ui';
+import { Button, Card, Col, Descriptions, Form, Input, Layout, Modal, Row, Select, Spin, Switch, Tabs, Typography } from '@douyinfe/semi-ui';
 import { VChart } from "@visactor/react-vchart";
 import {
   API,
@@ -46,10 +46,12 @@ const Detail = (props) => {
   const [userState, userDispatch] = useContext(UserContext);
   const [styleState, styleDispatch] = useContext(StyleContext);
   const [groupOptions, setGroupOptions] = useState([]);
+  const [allModelOptions, setAllModelOptions] = useState([]);
+  const [modelOptions, setModelOptions] = useState([]);
   const [inputs, setInputs] = useState({
     username: '',
     token_id: '',
-    model_name: '',
+    model_names: [],
     group: '',
     start_timestamp:
       localStorage.getItem('data_export_default_time') === 'hour'
@@ -61,7 +63,7 @@ const Detail = (props) => {
     channel: '',
     data_export_default_time: '',
   });
-  const { username, model_name, start_timestamp, end_timestamp, channel, token_id } =
+  const { username, model_names, start_timestamp, end_timestamp, channel, token_id } =
     inputs;
   const { group } = inputs;
   const isAdminUser = isAdmin();
@@ -294,6 +296,9 @@ const Detail = (props) => {
   const handleCustomPriceSwitchChange = async (value) => {
     setCustomPriceEnabled(value);
     localStorage.setItem(MODEL_PRICE_MODE_STORAGE_KEY, value ? 'true' : 'false');
+    if (!value) {
+      setModelOptions(allModelOptions);
+    }
     await loadQuotaData(value);
   };
 
@@ -326,6 +331,43 @@ const Detail = (props) => {
     }
   };
 
+  const updateModelOptions = (models = []) => {
+    setModelOptions((prev) => {
+      const optionMap = new Map(prev.map((item) => [item.value, item]));
+      models.forEach((modelName) => {
+        if (!modelName) {
+          return;
+        }
+        if (!optionMap.has(modelName)) {
+          optionMap.set(modelName, { label: modelName, value: modelName });
+        }
+      });
+      return Array.from(optionMap.values()).sort((a, b) =>
+        String(a.value).localeCompare(String(b.value)),
+      );
+    });
+  };
+
+  const loadModelOptions = async () => {
+    try {
+      const res = await API.get('/api/user/models');
+      const { success, data } = res.data;
+      if (success && Array.isArray(data)) {
+        const options = data
+          .filter((modelName) => !!modelName)
+          .map((modelName) => ({
+            label: modelName,
+            value: modelName,
+          }))
+          .sort((a, b) => String(a.value).localeCompare(String(b.value)));
+        setAllModelOptions(options);
+        setModelOptions(options);
+      }
+    } catch (e) {
+      // ignore
+    }
+  };
+
   const loadQuotaData = async (usePromptCompletionOverride = null, priceConfigOverride = null) => {
     setLoading(true);
     try {
@@ -337,10 +379,11 @@ const Detail = (props) => {
           ? customPriceEnabled
           : usePromptCompletionOverride;
       const usePromptCompletion = shouldUsePromptCompletion ? 'true' : 'false';
+      const modelNamesParam = encodeURIComponent((model_names || []).join(','));
       if (isAdminUser) {
-        url = `/api/data/?username=${username}&group=${group}&token_id=${token_id}&use_prompt_completion=${usePromptCompletion}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&default_time=${dataExportDefaultTime}`;
+        url = `/api/data/?username=${username}&group=${group}&token_id=${token_id}&model_names=${modelNamesParam}&use_prompt_completion=${usePromptCompletion}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&default_time=${dataExportDefaultTime}`;
       } else {
-        url = `/api/data/self/?group=${group}&token_id=${token_id}&use_prompt_completion=${usePromptCompletion}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&default_time=${dataExportDefaultTime}`;
+        url = `/api/data/self/?group=${group}&token_id=${token_id}&model_names=${modelNamesParam}&use_prompt_completion=${usePromptCompletion}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&default_time=${dataExportDefaultTime}`;
       }
       const res = await API.get(url);
       const { success, message, data } = res.data;
@@ -401,6 +444,18 @@ const Detail = (props) => {
     });
     const modelList = Array.from(uniqueModels);
     setCurrentModels(modelList);
+    if (useCustomPrice) {
+      const usedOptions = modelList
+        .filter((modelName) => !!modelName && modelName !== '无数据')
+        .map((modelName) => ({
+          label: modelName,
+          value: modelName,
+        }))
+        .sort((a, b) => String(a.value).localeCompare(String(b.value)));
+      setModelOptions(usedOptions);
+    } else {
+      setModelOptions(allModelOptions);
+    }
 
     // 处理颜色映射
     const newModelColors = {};
@@ -559,9 +614,16 @@ const Detail = (props) => {
       });
       initialized.current = true;
       loadGroupOptions().then();
+      loadModelOptions().then();
       initChart();
     }
   }, []);
+
+  useEffect(() => {
+    if (!customPriceEnabled) {
+      setModelOptions(allModelOptions);
+    }
+  }, [allModelOptions, customPriceEnabled]);
 
   return (
     <>
@@ -646,6 +708,20 @@ const Detail = (props) => {
                 name='token_id'
                 onChange={(value) => handleInputChange(value, 'token_id')}
               />
+              <div style={{ display: 'flex', flexDirection: 'column', marginRight: 16 }}>
+                <Typography.Text style={{ marginBottom: 6 }}>模型名称</Typography.Text>
+                <Select
+                  placeholder='全部模型'
+                  style={{ width: 280 }}
+                  multiple
+                  selection
+                  filter
+                  searchPosition='dropdown'
+                  value={model_names}
+                  optionList={modelOptions}
+                  onChange={(value) => handleInputChange(value || [], 'model_names')}
+                />
+              </div>
               {isAdminUser && (
                 <>
                   <Form.Input

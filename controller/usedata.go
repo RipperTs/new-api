@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"one-api/model"
 	"strconv"
+	"strings"
 )
 
 func GetAllQuotaDates(c *gin.Context) {
@@ -14,7 +15,8 @@ func GetAllQuotaDates(c *gin.Context) {
 	group := c.Query("group")
 	tokenId, _ := strconv.Atoi(c.Query("token_id"))
 	usePromptCompletion, _ := strconv.ParseBool(c.DefaultQuery("use_prompt_completion", "false"))
-	dates, err := model.GetAllQuotaDates(startTimestamp, endTimestamp, username, group, tokenId, usePromptCompletion)
+	modelNames := parseModelNames(c.Query("model_names"))
+	dates, err := model.GetAllQuotaDates(startTimestamp, endTimestamp, username, group, tokenId, usePromptCompletion, modelNames)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
@@ -45,7 +47,8 @@ func GetUserQuotaDates(c *gin.Context) {
 	group := c.Query("group")
 	tokenId, _ := strconv.Atoi(c.Query("token_id"))
 	usePromptCompletion, _ := strconv.ParseBool(c.DefaultQuery("use_prompt_completion", "false"))
-	dates, err := model.GetQuotaDataByUserId(userId, startTimestamp, endTimestamp, group, tokenId, usePromptCompletion)
+	modelNames := parseModelNames(c.Query("model_names"))
+	dates, err := model.GetQuotaDataByUserId(userId, startTimestamp, endTimestamp, group, tokenId, usePromptCompletion, modelNames)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
@@ -59,4 +62,20 @@ func GetUserQuotaDates(c *gin.Context) {
 		"data":    dates,
 	})
 	return
+}
+
+func parseModelNames(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	modelNames := make([]string, 0, len(parts))
+	for _, item := range parts {
+		modelName := strings.TrimSpace(item)
+		if modelName == "" {
+			continue
+		}
+		modelNames = append(modelNames, modelName)
+	}
+	return modelNames
 }
