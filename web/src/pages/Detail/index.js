@@ -1,7 +1,7 @@
 import React, { useContext, useEffect, useRef, useState } from 'react';
 import { initVChartSemiTheme } from '@visactor/vchart-semi-theme';
 
-import { Button, Card, Col, Descriptions, Form, Layout, Row, Spin, Tabs } from '@douyinfe/semi-ui';
+import { Button, Card, Col, Descriptions, Form, Input, Layout, Modal, Row, Spin, Switch, Tabs, Typography } from '@douyinfe/semi-ui';
 import { VChart } from "@visactor/react-vchart";
 import {
   API,
@@ -21,6 +21,24 @@ import {
 } from '../../helpers/render';
 import { UserContext } from '../../context/User/index.js';
 import { StyleContext } from '../../context/Style/index.js';
+
+const MODEL_PRICE_STORAGE_KEY = 'detail_model_price_config_v1';
+const MODEL_PRICE_MODE_STORAGE_KEY = 'detail_model_price_mode_v1';
+const DEFAULT_INPUT_PRICE = 0;
+const DEFAULT_OUTPUT_PRICE = 0;
+
+const loadModelPriceConfig = () => {
+  try {
+    const raw = localStorage.getItem(MODEL_PRICE_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (e) {
+    return {};
+  }
+};
 
 const Detail = (props) => {
   const formRef = useRef();
@@ -185,6 +203,11 @@ const Detail = (props) => {
 
   // 添加一个新的状态来存储模型-颜色映射
   const [modelColors, setModelColors] = useState({});
+  const [currentModels, setCurrentModels] = useState([]);
+  const [modelPriceModalVisible, setModelPriceModalVisible] = useState(false);
+  const [modelPriceConfig, setModelPriceConfig] = useState(() => loadModelPriceConfig());
+  const [editingModelPrices, setEditingModelPrices] = useState({});
+  const [customPriceEnabled, setCustomPriceEnabled] = useState(false);
 
   const handleInputChange = (value, name) => {
     if (name === 'data_export_default_time') {
@@ -192,6 +215,86 @@ const Detail = (props) => {
       return;
     }
     setInputs((inputs) => ({ ...inputs, [name]: value }));
+  };
+
+  const renderCurrency = (value) => {
+    return `$${Number(value || 0).toFixed(4)}`;
+  };
+
+  const getModelPrice = (modelName, priceConfig = modelPriceConfig) => {
+    const config = priceConfig[modelName] || {};
+    const inputPrice = Number(config.input_price);
+    const outputPrice = Number(config.output_price);
+    return {
+      inputPrice: Number.isFinite(inputPrice) ? inputPrice : DEFAULT_INPUT_PRICE,
+      outputPrice: Number.isFinite(outputPrice) ? outputPrice : DEFAULT_OUTPUT_PRICE,
+    };
+  };
+
+  const calcUsageByItem = (item, priceConfig = modelPriceConfig, useCustomPrice = customPriceEnabled) => {
+    if (!useCustomPrice) {
+      return parseFloat(getQuotaWithUnit(item.quota));
+    }
+    const { inputPrice, outputPrice } = getModelPrice(item.model_name, priceConfig);
+    const promptTokens = Number(item.prompt_tokens || 0);
+    const completionTokens = Number(item.completion_tokens || 0);
+    return (promptTokens / 1000000) * inputPrice + (completionTokens / 1000000) * outputPrice;
+  };
+
+  const openModelPriceModal = () => {
+    const models = currentModels.filter((modelName) => modelName && modelName !== '无数据');
+    const next = {};
+    models.forEach((modelName) => {
+      const config = modelPriceConfig[modelName] || {};
+      next[modelName] = {
+        input_price: config.input_price ?? '',
+        output_price: config.output_price ?? '',
+      };
+    });
+    setEditingModelPrices(next);
+    setModelPriceModalVisible(true);
+  };
+
+  const updateEditingModelPrice = (modelName, field, value) => {
+    setEditingModelPrices((prev) => ({
+      ...prev,
+      [modelName]: {
+        ...(prev[modelName] || {}),
+        [field]: value,
+      },
+    }));
+  };
+
+  const saveModelPriceConfig = async () => {
+    const nextConfig = { ...modelPriceConfig };
+    for (const modelName of Object.keys(editingModelPrices)) {
+      const rawInput = editingModelPrices[modelName]?.input_price;
+      const rawOutput = editingModelPrices[modelName]?.output_price;
+      if ((rawInput === '' || rawInput === undefined || rawInput === null) && (rawOutput === '' || rawOutput === undefined || rawOutput === null)) {
+        delete nextConfig[modelName];
+        continue;
+      }
+      const inputPrice = Number(rawInput);
+      const outputPrice = Number(rawOutput);
+      if (!Number.isFinite(inputPrice) || inputPrice < 0 || !Number.isFinite(outputPrice) || outputPrice < 0) {
+        showError(`${modelName} 的价格必须是大于等于 0 的数字`);
+        return;
+      }
+      nextConfig[modelName] = {
+        input_price: inputPrice,
+        output_price: outputPrice,
+      };
+    }
+    setModelPriceConfig(nextConfig);
+    localStorage.setItem(MODEL_PRICE_STORAGE_KEY, JSON.stringify(nextConfig));
+    setModelPriceModalVisible(false);
+    await loadQuotaData(customPriceEnabled, nextConfig);
+  };
+
+  const handleCustomPriceSwitchChange = async (value) => {
+    setCustomPriceEnabled(value);
+    localStorage.setItem(MODEL_PRICE_MODE_STORAGE_KEY, value ? 'true' : 'false');
+    await loadQuotaData(value);
   };
 
   const loadGroupOptions = async () => {
@@ -223,16 +326,21 @@ const Detail = (props) => {
     }
   };
 
-  const loadQuotaData = async () => {
+  const loadQuotaData = async (usePromptCompletionOverride = null, priceConfigOverride = null) => {
     setLoading(true);
     try {
       let url = '';
       let localStartTimestamp = Date.parse(start_timestamp) / 1000;
       let localEndTimestamp = Date.parse(end_timestamp) / 1000;
+      const shouldUsePromptCompletion =
+        usePromptCompletionOverride === null
+          ? customPriceEnabled
+          : usePromptCompletionOverride;
+      const usePromptCompletion = shouldUsePromptCompletion ? 'true' : 'false';
       if (isAdminUser) {
-        url = `/api/data/?username=${username}&group=${group}&token_id=${token_id}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&default_time=${dataExportDefaultTime}`;
+        url = `/api/data/?username=${username}&group=${group}&token_id=${token_id}&use_prompt_completion=${usePromptCompletion}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&default_time=${dataExportDefaultTime}`;
       } else {
-        url = `/api/data/self/?group=${group}&token_id=${token_id}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&default_time=${dataExportDefaultTime}`;
+        url = `/api/data/self/?group=${group}&token_id=${token_id}&use_prompt_completion=${usePromptCompletion}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&default_time=${dataExportDefaultTime}`;
       }
       const res = await API.get(url);
       const { success, message, data } = res.data;
@@ -259,7 +367,7 @@ const Detail = (props) => {
           item['created_at'] =
             Math.floor(item['created_at'] / timeGranularity) * timeGranularity;
         });
-        updateChartData(data);
+        updateChartData(data, priceConfigOverride, shouldUsePromptCompletion);
       } else {
         showError(message);
       }
@@ -276,7 +384,7 @@ const Detail = (props) => {
     await loadQuotaData();
   };
 
-  const updateChartData = (data) => {
+  const updateChartData = (data, priceConfigOverride = null, useCustomPrice = customPriceEnabled) => {
     let newPieData = [];
     let newLineData = [];
     let totalQuota = 0;
@@ -289,12 +397,14 @@ const Detail = (props) => {
     data.forEach(item => {
       uniqueModels.add(item.model_name);
       uniqueTimes.add(timestamp2string1(item.created_at, dataExportDefaultTime));
-      totalTokens += item.token_used;
+      totalTokens += Number(item.token_used || 0);
     });
+    const modelList = Array.from(uniqueModels);
+    setCurrentModels(modelList);
 
     // 处理颜色映射
     const newModelColors = {};
-    Array.from(uniqueModels).forEach((modelName) => {
+    modelList.forEach((modelName) => {
       newModelColors[modelName] = modelColorMap[modelName] ||
         modelColors[modelName] ||
         modelToColor(modelName);
@@ -303,7 +413,11 @@ const Detail = (props) => {
 
     // 处理饼图数据
     for (let item of data) {
-      totalQuota += item.quota;
+      if (useCustomPrice) {
+        totalQuota += calcUsageByItem(item, priceConfigOverride || modelPriceConfig, useCustomPrice);
+      } else {
+        totalQuota += item.quota;
+      }
       totalTimes += item.count;
 
       let pieItem = newPieData.find((it) => it.type === item.model_name);
@@ -339,7 +453,7 @@ const Detail = (props) => {
 
     // 为每个时间点和模型生成数据
     timePoints.forEach(time => {
-      Array.from(uniqueModels).forEach(model => {
+      modelList.forEach(model => {
         let existingData = data.find(item =>
           timestamp2string1(item.created_at, dataExportDefaultTime) === time &&
           item.model_name === model
@@ -348,7 +462,9 @@ const Detail = (props) => {
         newLineData.push({
           Time: time,
           Model: model,
-          Usage: existingData ? parseFloat(getQuotaWithUnit(existingData.quota)) : 0
+          Usage: existingData
+            ? calcUsageByItem(existingData, priceConfigOverride || modelPriceConfig, useCustomPrice)
+            : 0
         });
       });
     });
@@ -375,7 +491,43 @@ const Detail = (props) => {
       data: [{ id: 'barData', values: newLineData }],
       title: {
         ...prev.title,
-        subtext: `总计：${renderQuota(totalQuota, 2)}`
+        subtext: `总计：${useCustomPrice ? renderCurrency(totalQuota) : renderQuota(totalQuota, 2)}`
+      },
+      tooltip: {
+        mark: {
+          content: [
+            {
+              key: (datum) => datum['Model'],
+              value: (datum) =>
+                useCustomPrice
+                  ? renderCurrency(parseFloat(datum['Usage']))
+                  : renderQuotaNumberWithDigit(parseFloat(datum['Usage']), 4),
+            },
+          ],
+        },
+        dimension: {
+          content: [
+            {
+              key: (datum) => datum['Model'],
+              value: (datum) => datum['Usage'],
+            },
+          ],
+          updateContent: (array) => {
+            array.sort((a, b) => b.value - a.value);
+            let sum = 0;
+            for (let i = 0; i < array.length; i++) {
+              sum += parseFloat(array[i].value);
+              array[i].value = useCustomPrice
+                ? renderCurrency(parseFloat(array[i].value))
+                : renderQuotaNumberWithDigit(parseFloat(array[i].value), 4);
+            }
+            array.unshift({
+              key: '总计',
+              value: useCustomPrice ? renderCurrency(sum) : renderQuotaNumberWithDigit(sum, 4),
+            });
+            return array;
+          },
+        },
       },
       color: {
         specified: newModelColors
@@ -518,6 +670,22 @@ const Detail = (props) => {
               >
                 查询
               </Button>
+              <Button
+                type='secondary'
+                onClick={openModelPriceModal}
+                style={{ marginTop: 24, marginLeft: 8 }}
+              >
+                模型价格设置
+              </Button>
+              <div style={{ display: 'flex', alignItems: 'center', marginTop: 28, marginLeft: 12 }}>
+                <Typography.Text style={{ marginRight: 8 }}>使用手动模型价格</Typography.Text>
+                <Switch
+                  checked={customPriceEnabled}
+                  checkedText='开'
+                  uncheckedText='关'
+                  onChange={handleCustomPriceSwitchChange}
+                />
+              </div>
               <Form.Section>
               </Form.Section>
             </>
@@ -539,8 +707,8 @@ const Detail = (props) => {
               <Col span={styleState.isMobile?24:8}>
                 <Card>
                   <Descriptions row size="small">
-                    <Descriptions.Item itemKey='统计额度'>
-                      {renderQuota(consumeQuota)}
+                    <Descriptions.Item itemKey={customPriceEnabled ? '统计费用(USD)' : '统计额度'}>
+                      {customPriceEnabled ? renderCurrency(consumeQuota) : renderQuota(consumeQuota)}
                     </Descriptions.Item>
                     <Descriptions.Item itemKey='统计Tokens'>
                       {consumeTokens}
@@ -592,6 +760,61 @@ const Detail = (props) => {
               </Tabs>
             </Card>
           </Spin>
+          <Modal
+            title='模型价格设置'
+            visible={modelPriceModalVisible}
+            onOk={saveModelPriceConfig}
+            onCancel={() => setModelPriceModalVisible(false)}
+            okText='保存并应用'
+            cancelText='取消'
+            width={styleState.isMobile ? '96%' : 900}
+          >
+            <Typography.Text type='secondary'>
+              单位：USD / 1M tokens。未配置模型将按 0 计费。
+            </Typography.Text>
+            <div style={{ marginTop: 12, maxHeight: 460, overflowY: 'auto' }}>
+              {Object.keys(editingModelPrices).length === 0 ? (
+                <Typography.Text>当前查询结果中暂无可配置模型，请先查询到有数据的模型后再设置。</Typography.Text>
+              ) : (
+                Object.keys(editingModelPrices).sort().map((modelName) => (
+                  <div
+                    key={modelName}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 12,
+                      marginBottom: 10,
+                    }}
+                  >
+                    <Typography.Text
+                      ellipsis={{ showTooltip: true }}
+                      style={{ width: styleState.isMobile ? 120 : 220, flexShrink: 0 }}
+                    >
+                      {modelName}
+                    </Typography.Text>
+                    <Input
+                      type='number'
+                      min={0}
+                      step='0.0001'
+                      value={editingModelPrices[modelName]?.input_price}
+                      placeholder='输入价格'
+                      suffix='输入'
+                      onChange={(value) => updateEditingModelPrice(modelName, 'input_price', value)}
+                    />
+                    <Input
+                      type='number'
+                      min={0}
+                      step='0.0001'
+                      value={editingModelPrices[modelName]?.output_price}
+                      placeholder='输出价格'
+                      suffix='输出'
+                      onChange={(value) => updateEditingModelPrice(modelName, 'output_price', value)}
+                    />
+                  </div>
+                ))
+              )}
+            </div>
+          </Modal>
         </Layout.Content>
       </Layout>
     </>

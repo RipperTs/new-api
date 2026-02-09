@@ -10,15 +10,17 @@ import (
 
 // QuotaData 柱状图数据
 type QuotaData struct {
-	Id        int    `json:"id"`
-	UserID    int    `json:"user_id" gorm:"index"`
-	Username  string `json:"username" gorm:"index:idx_qdt_model_user_name,priority:2;size:64;default:''"`
-	ModelName string `json:"model_name" gorm:"index:idx_qdt_model_user_name,priority:1;size:64;default:''"`
-	CreatedAt int64  `json:"created_at" gorm:"bigint;index:idx_qdt_created_at,priority:2"`
-	TokenUsed int    `json:"token_used" gorm:"default:0"`
-	Count     int    `json:"count" gorm:"default:0"`
-	Quota     int    `json:"quota" gorm:"default:0"`
-	Group     string `json:"group" gorm:"type:varchar(64);index;default:'default'"`
+	Id               int    `json:"id"`
+	UserID           int    `json:"user_id" gorm:"index"`
+	Username         string `json:"username" gorm:"index:idx_qdt_model_user_name,priority:2;size:64;default:''"`
+	ModelName        string `json:"model_name" gorm:"index:idx_qdt_model_user_name,priority:1;size:64;default:''"`
+	CreatedAt        int64  `json:"created_at" gorm:"bigint;index:idx_qdt_created_at,priority:2"`
+	TokenUsed        int    `json:"token_used" gorm:"default:0"`
+	Count            int    `json:"count" gorm:"default:0"`
+	Quota            int    `json:"quota" gorm:"default:0"`
+	Group            string `json:"group" gorm:"type:varchar(64);index;default:'default'"`
+	PromptTokens     int    `json:"prompt_tokens" gorm:"column:prompt_tokens;->;-:migration"`
+	CompletionTokens int    `json:"completion_tokens" gorm:"column:completion_tokens;->;-:migration"`
 }
 
 func UpdateQuotaData() {
@@ -124,7 +126,7 @@ func getLogQuotaBucketExpr() string {
 func getQuotaDataByLogs(startTime int64, endTime int64, group string, tokenId int, appendCondition func(tx *gorm.DB) *gorm.DB) (quotaData []*QuotaData, err error) {
 	var quotaDatas []*QuotaData
 	bucketExpr := getLogQuotaBucketExpr()
-	tx := LOG_DB.Table("logs").Select("model_name, count(*) as count, sum(quota) as quota, sum(prompt_tokens + completion_tokens) as token_used, "+bucketExpr+" as created_at").
+	tx := LOG_DB.Table("logs").Select("model_name, count(*) as count, sum(quota) as quota, sum(prompt_tokens + completion_tokens) as token_used, sum(prompt_tokens) as prompt_tokens, sum(completion_tokens) as completion_tokens, "+bucketExpr+" as created_at").
 		Where("type = ? and created_at >= ? and created_at <= ?", LogTypeConsume, startTime, endTime)
 	if appendCondition != nil {
 		tx = appendCondition(tx)
@@ -139,14 +141,14 @@ func getQuotaDataByLogs(startTime int64, endTime int64, group string, tokenId in
 	return quotaDatas, err
 }
 
-func GetQuotaDataByUsername(username string, startTime int64, endTime int64, group string, tokenId int) (quotaData []*QuotaData, err error) {
-	if tokenId > 0 {
+func GetQuotaDataByUsername(username string, startTime int64, endTime int64, group string, tokenId int, usePromptCompletion bool) (quotaData []*QuotaData, err error) {
+	if tokenId > 0 || usePromptCompletion {
 		return getQuotaDataByLogs(startTime, endTime, group, tokenId, func(tx *gorm.DB) *gorm.DB {
 			return tx.Where("username = ?", username)
 		})
 	}
 	var quotaDatas []*QuotaData
-	tx := DB.Table("quota_data").Select("model_name, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used, created_at").
+	tx := DB.Table("quota_data").Select("model_name, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used, 0 as prompt_tokens, 0 as completion_tokens, created_at").
 		Where("username = ? and created_at >= ? and created_at <= ?", username, startTime, endTime)
 	if group != "" {
 		tx = tx.Where(groupCol+" = ?", group)
@@ -155,14 +157,14 @@ func GetQuotaDataByUsername(username string, startTime int64, endTime int64, gro
 	return quotaDatas, err
 }
 
-func GetQuotaDataByUserId(userId int, startTime int64, endTime int64, group string, tokenId int) (quotaData []*QuotaData, err error) {
-	if tokenId > 0 {
+func GetQuotaDataByUserId(userId int, startTime int64, endTime int64, group string, tokenId int, usePromptCompletion bool) (quotaData []*QuotaData, err error) {
+	if tokenId > 0 || usePromptCompletion {
 		return getQuotaDataByLogs(startTime, endTime, group, tokenId, func(tx *gorm.DB) *gorm.DB {
 			return tx.Where("user_id = ?", userId)
 		})
 	}
 	var quotaDatas []*QuotaData
-	tx := DB.Table("quota_data").Select("model_name, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used, created_at").
+	tx := DB.Table("quota_data").Select("model_name, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used, 0 as prompt_tokens, 0 as completion_tokens, created_at").
 		Where("user_id = ? and created_at >= ? and created_at <= ?", userId, startTime, endTime)
 	if group != "" {
 		tx = tx.Where(groupCol+" = ?", group)
@@ -171,18 +173,18 @@ func GetQuotaDataByUserId(userId int, startTime int64, endTime int64, group stri
 	return quotaDatas, err
 }
 
-func GetAllQuotaDates(startTime int64, endTime int64, username string, group string, tokenId int) (quotaData []*QuotaData, err error) {
+func GetAllQuotaDates(startTime int64, endTime int64, username string, group string, tokenId int, usePromptCompletion bool) (quotaData []*QuotaData, err error) {
 	if username != "" {
-		return GetQuotaDataByUsername(username, startTime, endTime, group, tokenId)
+		return GetQuotaDataByUsername(username, startTime, endTime, group, tokenId, usePromptCompletion)
 	}
-	if tokenId > 0 {
+	if tokenId > 0 || usePromptCompletion {
 		return getQuotaDataByLogs(startTime, endTime, group, tokenId, nil)
 	}
 	var quotaDatas []*QuotaData
 	// 从quota_data表中查询数据
 	// only select model_name, sum(count) as count, sum(quota) as quota, model_name, created_at from quota_data group by model_name, created_at;
 	//err = DB.Table("quota_data").Where("created_at >= ? and created_at <= ?", startTime, endTime).Find(&quotaDatas).Error
-	tx := DB.Table("quota_data").Select("model_name, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used, created_at").
+	tx := DB.Table("quota_data").Select("model_name, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used, 0 as prompt_tokens, 0 as completion_tokens, created_at").
 		Where("created_at >= ? and created_at <= ?", startTime, endTime)
 	if group != "" {
 		tx = tx.Where(groupCol+" = ?", group)

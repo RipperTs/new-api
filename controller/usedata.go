@@ -13,7 +13,8 @@ func GetAllQuotaDates(c *gin.Context) {
 	username := c.Query("username")
 	group := c.Query("group")
 	tokenId, _ := strconv.Atoi(c.Query("token_id"))
-	dates, err := model.GetAllQuotaDates(startTimestamp, endTimestamp, username, group, tokenId)
+	usePromptCompletion, _ := strconv.ParseBool(c.DefaultQuery("use_prompt_completion", "false"))
+	dates, err := model.GetAllQuotaDates(startTimestamp, endTimestamp, username, group, tokenId, usePromptCompletion)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
@@ -43,7 +44,8 @@ func GetUserQuotaDates(c *gin.Context) {
 	}
 	group := c.Query("group")
 	tokenId, _ := strconv.Atoi(c.Query("token_id"))
-	dates, err := model.GetQuotaDataByUserId(userId, startTimestamp, endTimestamp, group, tokenId)
+	usePromptCompletion, _ := strconv.ParseBool(c.DefaultQuery("use_prompt_completion", "false"))
+	dates, err := model.GetQuotaDataByUserId(userId, startTimestamp, endTimestamp, group, tokenId, usePromptCompletion)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
