@@ -29,6 +29,11 @@ func OpenaiResponsesHandler(c *gin.Context, resp *http.Response, info *relaycomm
 	if err != nil {
 		return service.OpenAIErrorWrapper(err, "read_response_failed", http.StatusInternalServerError), nil
 	}
+	if !info.ThinkingEnabled {
+		if body, err = sanitizeThinkingPayload(body); err != nil {
+			return service.OpenAIErrorWrapper(err, "sanitize_response_failed", http.StatusInternalServerError), nil
+		}
+	}
 
 	var resource dto.ResponsesResponseResourceLite
 	if err := json.Unmarshal(body, &resource); err == nil && resource.Model != "" {
@@ -88,6 +93,11 @@ func OpenaiResponsesStreamHandler(c *gin.Context, resp *http.Response, info *rel
 				continue
 			}
 
+			if !info.ThinkingEnabled {
+				if modifiedData, err := sanitizeThinkingPayload(common.StringToByteSlice(data)); err == nil {
+					data = string(modifiedData)
+				}
+			}
 			_ = service.StringData(c, data)
 
 			var ev dto.ResponsesStreamEventLite

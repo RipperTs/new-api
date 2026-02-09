@@ -26,11 +26,17 @@ func ResponsesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) 
 	if relayInfo.ChannelType != common.ChannelTypeOpenAI && relayInfo.ChannelType != common.ChannelTypeCodex {
 		return service.OpenAIErrorWrapperLocal(errors.New("当前渠道不支持 Responses API"), "responses_not_supported", http.StatusBadRequest)
 	}
+	if relayInfo.ChannelType == common.ChannelTypeOpenAI {
+		if thinkingErr := applyIsThinkingOption(c, relayInfo); thinkingErr != nil {
+			return thinkingErr
+		}
+	}
 
 	var requestMap map[string]any
 	if err := common.UnmarshalBodyReusable(c, &requestMap); err != nil {
 		return service.OpenAIErrorWrapperLocal(err, "unmarshal_request_failed", http.StatusBadRequest)
 	}
+	delete(requestMap, "is_thinking")
 
 	modelName, _ := requestMap["model"].(string)
 	if modelName == "" {

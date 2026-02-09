@@ -47,6 +47,7 @@ type RelayInfo struct {
 	IsFirstRequest       bool
 	AudioUsage           bool
 	ReasoningEffort      string
+	ThinkingEnabled      bool
 	ChannelSetting       map[string]interface{}
 }
 
@@ -95,6 +96,7 @@ func GenRelayInfo(c *gin.Context) *RelayInfo {
 		ApiVersion:        c.GetString("api_version"),
 		ApiKey:            strings.TrimPrefix(c.Request.Header.Get("Authorization"), "Bearer "),
 		Organization:      c.GetString("channel_organization"),
+		ThinkingEnabled:   true,
 		ChannelSetting:    channelSetting,
 	}
 	if strings.HasPrefix(c.Request.URL.Path, "/pg") {
@@ -214,5 +216,6 @@ func (info *TaskRelayInfo) ToRelayInfo() *RelayInfo {
 		RequestURLPath:    info.RequestURLPath,
 		ApiKey:            info.ApiKey,
 		BaseUrl:           info.BaseUrl,
+		ThinkingEnabled:   true,
 	}
 }

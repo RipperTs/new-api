@@ -172,7 +172,7 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 		case RequestModeGemini:
 			err, usage = gemini.GeminiChatHandler(c, resp, info)
 		case RequestModeLlama:
-			err, usage = openai.OpenaiHandler(c, resp, info.PromptTokens, info.OriginModelName)
+			err, usage = openai.OpenaiHandler(c, resp, info.PromptTokens, info.OriginModelName, info.ThinkingEnabled)
 		}
 	}
 	return

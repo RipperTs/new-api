@@ -26,7 +26,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-func sendStreamData(c *gin.Context, data string, forceFormat bool) error {
+func sendStreamData(c *gin.Context, data string, forceFormat bool, thinkingEnabled bool) error {
 	if data == "" {
 		return nil
 	}
@@ -34,11 +34,16 @@ func sendStreamData(c *gin.Context, data string, forceFormat bool) error {
 	if forceFormat {
 		var lastStreamResponse dto.ChatCompletionsStreamResponse
 		if err := json.Unmarshal(common.StringToByteSlice(data), &lastStreamResponse); err != nil {
+			if !thinkingEnabled {
+				if modifiedData, sanitizeErr := sanitizeThinkingPayload(common.StringToByteSlice(data)); sanitizeErr == nil {
+					return service.StringData(c, string(modifiedData))
+				}
+			}
 			return err
 		}
-		// 确保流式响应中 reasoning 和 reasoning_content 字段兼容性
+		// 根据 is_thinking 策略处理 reasoning 字段
 		for i := range lastStreamResponse.Choices {
-			lastStreamResponse.Choices[i].Delta.EnsureReasoningCompatibility()
+			applyThinkingPolicyToDelta(&lastStreamResponse.Choices[i].Delta, thinkingEnabled)
 		}
 		return service.ObjectData(c, lastStreamResponse)
 	}
@@ -46,9 +51,9 @@ func sendStreamData(c *gin.Context, data string, forceFormat bool) error {
 	// 对于非forceFormat的情况，也需要处理兼容性
 	var streamResponse dto.ChatCompletionsStreamResponse
 	if err := json.Unmarshal(common.StringToByteSlice(data), &streamResponse); err == nil {
-		// 确保流式响应中 reasoning 和 reasoning_content 字段兼容性
+		// 根据 is_thinking 策略处理 reasoning 字段
 		for i := range streamResponse.Choices {
-			streamResponse.Choices[i].Delta.EnsureReasoningCompatibility()
+			applyThinkingPolicyToDelta(&streamResponse.Choices[i].Delta, thinkingEnabled)
 		}
 		// 重新序列化修改后的数据
 		modifiedData, err := json.Marshal(streamResponse)
@@ -56,6 +61,11 @@ func sendStreamData(c *gin.Context, data string, forceFormat bool) error {
 			return err
 		}
 		return service.StringData(c, string(modifiedData))
+	}
+	if !thinkingEnabled {
+		if modifiedData, err := sanitizeThinkingPayload(common.StringToByteSlice(data)); err == nil {
+			return service.StringData(c, string(modifiedData))
+		}
 	}
 	return service.StringData(c, data)
 }
@@ -117,7 +127,7 @@ func OaiStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rel
 			data = data[6:]
 			if !strings.HasPrefix(data, "[DONE]") {
 				if lastStreamData != "" {
-					err := sendStreamData(c, lastStreamData, forceFormat)
+					err := sendStreamData(c, lastStreamData, forceFormat, info.ThinkingEnabled)
 					if err != nil {
 						common.LogError(c, "streaming error: "+err.Error())
 					}
@@ -160,7 +170,7 @@ func OaiStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rel
 		}
 	}
 	if shouldSendLastResp {
-		sendStreamData(c, lastStreamData, forceFormat)
+		sendStreamData(c, lastStreamData, forceFormat, info.ThinkingEnabled)
 	}
 
 	// 计算token
@@ -180,7 +190,7 @@ func OaiStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rel
 					//	usage = streamResponse.Usage
 					//}
 					for _, choice := range streamResponse.Choices {
-						choice.Delta.EnsureReasoningCompatibility()
+						applyThinkingPolicyToDelta(&choice.Delta, info.ThinkingEnabled)
 						responseTextBuilder.WriteString(choice.Delta.GetContentString())
 						if choice.Delta.ToolCalls != nil {
 							if len(choice.Delta.ToolCalls) > toolCount {
@@ -201,7 +211,7 @@ func OaiStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rel
 				//	containStreamUsage = true
 				//}
 				for _, choice := range streamResponse.Choices {
-					choice.Delta.EnsureReasoningCompatibility()
+					applyThinkingPolicyToDelta(&choice.Delta, info.ThinkingEnabled)
 					responseTextBuilder.WriteString(choice.Delta.GetContentString())
 					if choice.Delta.ToolCalls != nil {
 						if len(choice.Delta.ToolCalls) > toolCount {
@@ -256,7 +266,7 @@ func OaiStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rel
 	return nil, usage
 }
 
-func OpenaiHandler(c *gin.Context, resp *http.Response, promptTokens int, model string) (*dto.OpenAIErrorWithStatusCode, *dto.Usage) {
+func OpenaiHandler(c *gin.Context, resp *http.Response, promptTokens int, model string, thinkingEnabled bool) (*dto.OpenAIErrorWithStatusCode, *dto.Usage) {
 	var simpleResponse dto.SimpleResponse
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -308,9 +318,9 @@ func OpenaiHandler(c *gin.Context, resp *http.Response, promptTokens int, model 
 		return nil, &simpleResponse.Usage
 	}
 
-	// Chat / Completions 等：做 reasoning 字段兼容处理
+	// Chat / Completions 等：根据 is_thinking 策略处理 reasoning 字段
 	for i := range simpleResponse.Choices {
-		simpleResponse.Choices[i].Message.EnsureReasoningCompatibility()
+		applyThinkingPolicyToMessage(&simpleResponse.Choices[i].Message, thinkingEnabled)
 	}
 
 	// 重新序列化修改后的响应数据

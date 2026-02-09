@@ -68,6 +68,11 @@ func getAndValidateTextRequest(c *gin.Context, relayInfo *relaycommon.RelayInfo)
 func TextHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) {
 
 	relayInfo := relaycommon.GenRelayInfo(c)
+	if relayInfo.ChannelType == common.ChannelTypeOpenAI {
+		if thinkingErr := applyIsThinkingOption(c, relayInfo); thinkingErr != nil {
+			return thinkingErr
+		}
+	}
 
 	// get & validate textRequest 获取并验证文本请求
 	textRequest, err := getAndValidateTextRequest(c, relayInfo)
