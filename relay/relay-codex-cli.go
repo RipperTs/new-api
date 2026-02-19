@@ -14,7 +14,6 @@ import (
 	relayconstant "one-api/relay/constant"
 	"one-api/service"
 	"one-api/setting"
-	"os"
 	"strings"
 )
 
@@ -325,43 +324,15 @@ func extractRequestIDSuffix(msg string) string {
 }
 
 func codexCLIDebugEnabled(c *gin.Context, info *relaycommon.RelayInfo) bool {
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("CODEX_CLI_DEBUG")), "true") || common.DebugEnabled {
-		return true
-	}
-	if info != nil && info.ChannelSetting != nil {
-		if v, ok := info.ChannelSetting["codex_cli_debug"]; ok {
-			switch vv := v.(type) {
-			case bool:
-				return vv
-			case string:
-				return strings.EqualFold(strings.TrimSpace(vv), "true")
-			}
-		}
-	}
 	return false
 }
 
 func codexCLILog(c *gin.Context, info *relaycommon.RelayInfo, label string, payload any) {
-	if !codexCLIDebugEnabled(c, info) {
-		return
-	}
-	b, _ := json.Marshal(payload)
-	codexCLILogLine(c, info, fmt.Sprintf("%s=%s", label, truncateForLog(string(b), 4000)))
+	return
 }
 
 func codexCLILogLine(c *gin.Context, info *relaycommon.RelayInfo, line string) {
-	if !codexCLIDebugEnabled(c, info) {
-		return
-	}
-	reqID := ""
-	if c != nil {
-		reqID = c.GetString(common.RequestIdKey)
-	}
-	chID := 0
-	if info != nil {
-		chID = info.ChannelId
-	}
-	common.SysLog(fmt.Sprintf("[codex-cli] reqid=%s channel_id=%d %s", reqID, chID, truncateForLog(line, 4000)))
+	return
 }
 
 func truncateForLog(s string, max int) string {

@@ -12,7 +12,6 @@ import (
 	"one-api/dto"
 	relaycommon "one-api/relay/common"
 	"one-api/service"
-	"os"
 	"strings"
 )
 
@@ -459,66 +458,19 @@ func writeSSEJSONEvent(c *gin.Context, eventName string, payload any) error {
 }
 
 func codexCLIDebugEnabled(info *relaycommon.RelayInfo) bool {
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("CODEX_CLI_DEBUG")), "true") || common.DebugEnabled {
-		return true
-	}
-	if info != nil && info.ChannelSetting != nil {
-		if v, ok := info.ChannelSetting["codex_cli_debug"]; ok {
-			switch vv := v.(type) {
-			case bool:
-				return vv
-			case string:
-				return strings.EqualFold(strings.TrimSpace(vv), "true")
-			}
-		}
-	}
 	return false
 }
 
 func codexCLILogLine(c *gin.Context, info *relaycommon.RelayInfo, line string) {
-	if !codexCLIDebugEnabled(info) {
-		return
-	}
-	reqID := ""
-	if c != nil {
-		reqID = c.GetString(common.RequestIdKey)
-	}
-	chID := 0
-	if info != nil {
-		chID = info.ChannelId
-	}
-	common.SysLog(fmt.Sprintf("[codex-cli] reqid=%s channel_id=%d %s", reqID, chID, truncateForLog(line, 4000)))
+	return
 }
 
 func codexCLILogAlwaysLine(c *gin.Context, info *relaycommon.RelayInfo, line string) {
-	reqID := ""
-	if c != nil {
-		reqID = c.GetString(common.RequestIdKey)
-	}
-	chID := 0
-	if info != nil {
-		chID = info.ChannelId
-	}
-	common.SysLog(fmt.Sprintf("[codex-cli] reqid=%s channel_id=%d %s", reqID, chID, truncateForLog(line, 4000)))
+	return
 }
 
 func logCodexCLILongLineAlways(c *gin.Context, info *relaycommon.RelayInfo, prefix string, s string, maxEach int) {
-	ss := strings.TrimSpace(s)
-	if ss == "" {
-		return
-	}
-	if maxEach <= 0 {
-		maxEach = 3500
-	}
-	// 日志行本身还有 reqid/channel_id 等前缀，分段避免被截断。
-	for len(ss) > 0 {
-		chunk := ss
-		if len(chunk) > maxEach {
-			chunk = chunk[:maxEach]
-		}
-		codexCLILogAlwaysLine(c, info, prefix+chunk)
-		ss = strings.TrimSpace(strings.TrimPrefix(ss[len(chunk):], "\n"))
-	}
+	return
 }
 
 func truncateForLog(s string, max int) string {
