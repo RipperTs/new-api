@@ -88,28 +88,55 @@ func (channel *Channel) Save() error {
 	return DB.Save(channel).Error
 }
 
+func applyChannelFilters(query *gorm.DB, channelType *int, group string) *gorm.DB {
+	if channelType != nil {
+		query = query.Where("type = ?", *channelType)
+	}
+	if group != "" && group != "null" {
+		if common.UsingMySQL {
+			query = query.Where(`CONCAT(',', `+groupCol+`, ',') LIKE ?`, "%,"+group+",%")
+		} else {
+			// sqlite, PostgreSQL
+			query = query.Where(`(',' || `+groupCol+` || ',') LIKE ?`, "%,"+group+",%")
+		}
+	}
+	return query
+}
+
 func GetAllChannels(startIdx int, num int, selectAll bool, idSort bool) ([]*Channel, error) {
+	return GetAllChannelsByFilter(startIdx, num, selectAll, idSort, nil, "")
+}
+
+func GetAllChannelsByFilter(startIdx int, num int, selectAll bool, idSort bool, channelType *int, group string) ([]*Channel, error) {
 	var channels []*Channel
 	var err error
 	order := "priority desc"
 	if idSort {
 		order = "id desc"
 	}
+	query := DB.Order(order)
+	query = applyChannelFilters(query, channelType, group)
 	if selectAll {
-		err = DB.Order(order).Find(&channels).Error
+		err = query.Find(&channels).Error
 	} else {
-		err = DB.Order(order).Limit(num).Offset(startIdx).Omit("key").Find(&channels).Error
+		err = query.Limit(num).Offset(startIdx).Omit("key").Find(&channels).Error
 	}
 	return channels, err
 }
 
 func GetChannelsByTag(tag string, idSort bool) ([]*Channel, error) {
+	return GetChannelsByTagByFilter(tag, idSort, nil, "")
+}
+
+func GetChannelsByTagByFilter(tag string, idSort bool, channelType *int, group string) ([]*Channel, error) {
 	var channels []*Channel
 	order := "priority desc"
 	if idSort {
 		order = "id desc"
 	}
-	err := DB.Where("tag = ?", tag).Order(order).Find(&channels).Error
+	query := DB.Where("tag = ?", tag).Order(order)
+	query = applyChannelFilters(query, channelType, group)
+	err := query.Find(&channels).Error
 	return channels, err
 }
 
@@ -120,12 +147,15 @@ func GetChannelsByStatus(status int) ([]*Channel, error) {
 }
 
 func SearchChannels(keyword string, group string, model string, idSort bool) ([]*Channel, error) {
+	return SearchChannelsByFilter(keyword, group, model, nil, idSort)
+}
+
+func SearchChannelsByFilter(keyword string, group string, model string, channelType *int, idSort bool) ([]*Channel, error) {
 	var channels []*Channel
 	modelsCol := "`models`"
 
 	// 如果是 PostgreSQL，使用双引号
 	if common.UsingPostgreSQL {
-		keyCol = `"key"`
 		modelsCol = `"models"`
 	}
 
@@ -136,24 +166,11 @@ func SearchChannels(keyword string, group string, model string, idSort bool) ([]
 
 	// 构造基础查询
 	baseQuery := DB.Model(&Channel{}).Omit(keyCol)
+	baseQuery = applyChannelFilters(baseQuery, channelType, group)
 
 	// 构造WHERE子句
-	var whereClause string
-	var args []interface{}
-	if group != "" && group != "null" {
-		var groupCondition string
-		if common.UsingMySQL {
-			groupCondition = `CONCAT(',', ` + groupCol + `, ',') LIKE ?`
-		} else {
-			// sqlite, PostgreSQL
-			groupCondition = `(',' || ` + groupCol + ` || ',') LIKE ?`
-		}
-		whereClause = "(id = ? OR name LIKE ? OR " + keyCol + " = ?) AND " + modelsCol + ` LIKE ? AND ` + groupCondition
-		args = append(args, common.String2Int(keyword), "%"+keyword+"%", keyword, "%"+model+"%", "%,"+group+",%")
-	} else {
-		whereClause = "(id = ? OR name LIKE ? OR " + keyCol + " = ?) AND " + modelsCol + " LIKE ?"
-		args = append(args, common.String2Int(keyword), "%"+keyword+"%", keyword, "%"+model+"%")
-	}
+	whereClause := "(id = ? OR name LIKE ? OR " + keyCol + " = ?) AND " + modelsCol + " LIKE ?"
+	args := []interface{}{common.String2Int(keyword), "%" + keyword + "%", keyword, "%" + model + "%"}
 
 	// 执行查询
 	err := baseQuery.Where(whereClause, args...).Order(order).Find(&channels).Error
@@ -441,12 +458,22 @@ func DeleteDisabledChannel() (int64, error) {
 }
 
 func GetPaginatedTags(offset int, limit int) ([]*string, error) {
+	return GetPaginatedTagsByFilter(offset, limit, nil, "")
+}
+
+func GetPaginatedTagsByFilter(offset int, limit int, channelType *int, group string) ([]*string, error) {
 	var tags []*string
-	err := DB.Model(&Channel{}).Select("DISTINCT tag").Where("tag != ''").Offset(offset).Limit(limit).Find(&tags).Error
+	query := DB.Model(&Channel{}).Select("DISTINCT tag").Where("tag != ''")
+	query = applyChannelFilters(query, channelType, group)
+	err := query.Offset(offset).Limit(limit).Find(&tags).Error
 	return tags, err
 }
 
 func SearchTags(keyword string, group string, model string, idSort bool) ([]*string, error) {
+	return SearchTagsByFilter(keyword, group, model, nil, idSort)
+}
+
+func SearchTagsByFilter(keyword string, group string, model string, channelType *int, idSort bool) ([]*string, error) {
 	var tags []*string
 	modelsCol := "`models`"
 
@@ -462,24 +489,11 @@ func SearchTags(keyword string, group string, model string, idSort bool) ([]*str
 
 	// 构造基础查询
 	baseQuery := DB.Model(&Channel{}).Omit(keyCol)
+	baseQuery = applyChannelFilters(baseQuery, channelType, group)
 
 	// 构造WHERE子句
-	var whereClause string
-	var args []interface{}
-	if group != "" && group != "null" {
-		var groupCondition string
-		if common.UsingMySQL {
-			groupCondition = `CONCAT(',', ` + groupCol + `, ',') LIKE ?`
-		} else {
-			// sqlite, PostgreSQL
-			groupCondition = `(',' || ` + groupCol + ` || ',') LIKE ?`
-		}
-		whereClause = "(id = ? OR name LIKE ? OR " + keyCol + " = ?) AND " + modelsCol + ` LIKE ? AND ` + groupCondition
-		args = append(args, common.String2Int(keyword), "%"+keyword+"%", keyword, "%"+model+"%", "%,"+group+",%")
-	} else {
-		whereClause = "(id = ? OR name LIKE ? OR " + keyCol + " = ?) AND " + modelsCol + " LIKE ?"
-		args = append(args, common.String2Int(keyword), "%"+keyword+"%", keyword, "%"+model+"%")
-	}
+	whereClause := "(id = ? OR name LIKE ? OR " + keyCol + " = ?) AND " + modelsCol + " LIKE ?"
+	args := []interface{}{common.String2Int(keyword), "%" + keyword + "%", keyword, "%" + model + "%"}
 
 	subQuery := baseQuery.Where(whereClause, args...).
 		Select("tag").

@@ -41,6 +41,18 @@ type OpenAIModelsResponse struct {
 	Success bool          `json:"success"`
 }
 
+func parseChannelTypeQuery(c *gin.Context) (*int, error) {
+	typeValue := strings.TrimSpace(c.Query("type"))
+	if typeValue == "" || strings.EqualFold(typeValue, "null") {
+		return nil, nil
+	}
+	channelType, err := strconv.Atoi(typeValue)
+	if err != nil {
+		return nil, fmt.Errorf("invalid type: %s", typeValue)
+	}
+	return &channelType, nil
+}
+
 func GetAllChannels(c *gin.Context) {
 	p, _ := strconv.Atoi(c.Query("p"))
 	pageSize, _ := strconv.Atoi(c.Query("page_size"))
@@ -53,8 +65,17 @@ func GetAllChannels(c *gin.Context) {
 	channelData := make([]*model.Channel, 0)
 	idSort, _ := strconv.ParseBool(c.Query("id_sort"))
 	enableTagMode, _ := strconv.ParseBool(c.Query("tag_mode"))
+	group := strings.TrimSpace(c.Query("group"))
+	channelType, err := parseChannelTypeQuery(c)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
 	if enableTagMode {
-		tags, err := model.GetPaginatedTags(p*pageSize, pageSize)
+		tags, err := model.GetPaginatedTagsByFilter(p*pageSize, pageSize, channelType, group)
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,
@@ -64,14 +85,14 @@ func GetAllChannels(c *gin.Context) {
 		}
 		for _, tag := range tags {
 			if tag != nil && *tag != "" {
-				tagChannel, err := model.GetChannelsByTag(*tag, idSort)
+				tagChannel, err := model.GetChannelsByTagByFilter(*tag, idSort, channelType, group)
 				if err == nil {
 					channelData = append(channelData, tagChannel...)
 				}
 			}
 		}
 	} else {
-		channels, err := model.GetAllChannels(p*pageSize, pageSize, false, idSort)
+		channels, err := model.GetAllChannelsByFilter(p*pageSize, pageSize, false, idSort, channelType, group)
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,
@@ -175,9 +196,17 @@ func SearchChannels(c *gin.Context) {
 	modelKeyword := c.Query("model")
 	idSort, _ := strconv.ParseBool(c.Query("id_sort"))
 	enableTagMode, _ := strconv.ParseBool(c.Query("tag_mode"))
+	channelType, err := parseChannelTypeQuery(c)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
 	channelData := make([]*model.Channel, 0)
 	if enableTagMode {
-		tags, err := model.SearchTags(keyword, group, modelKeyword, idSort)
+		tags, err := model.SearchTagsByFilter(keyword, group, modelKeyword, channelType, idSort)
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,
@@ -187,14 +216,14 @@ func SearchChannels(c *gin.Context) {
 		}
 		for _, tag := range tags {
 			if tag != nil && *tag != "" {
-				tagChannel, err := model.GetChannelsByTag(*tag, idSort)
+				tagChannel, err := model.GetChannelsByTagByFilter(*tag, idSort, channelType, group)
 				if err == nil {
 					channelData = append(channelData, tagChannel...)
 				}
 			}
 		}
 	} else {
-		channels, err := model.SearchChannels(keyword, group, modelKeyword, idSort)
+		channels, err := model.SearchChannelsByFilter(keyword, group, modelKeyword, channelType, idSort)
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,

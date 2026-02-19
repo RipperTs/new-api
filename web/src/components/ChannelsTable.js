@@ -375,6 +375,7 @@ const ChannelsTable = () => {
   const [activePage, setActivePage] = useState(1);
   const [idSort, setIdSort] = useState(false);
   const [searchKeyword, setSearchKeyword] = useState('');
+  const [searchType, setSearchType] = useState('');
   const [searchGroup, setSearchGroup] = useState('');
   const [searchModel, setSearchModel] = useState('');
   const [searching, setSearching] = useState(false);
@@ -395,6 +396,18 @@ const ChannelsTable = () => {
   const [selectedChannels, setSelectedChannels] = useState([]);
   const [showEditPriority, setShowEditPriority] = useState(false);
   const [enableTagMode, setEnableTagMode] = useState(false);
+
+  const channelTypeOptions = [
+    { label: '全部类型', value: '' },
+    ...CHANNEL_OPTIONS.map((item) => ({
+      label: item.label || item.text,
+      value: item.value
+    }))
+  ];
+  const channelGroupOptions = [
+    { label: '全部分组', value: '' },
+    ...groupOptions
+  ];
 
 
   const removeRecord = (record) => {
@@ -509,10 +522,22 @@ const ChannelsTable = () => {
     }
   };
 
-  const loadChannels = async (startIdx, pageSize, idSort, enableTagMode) => {
+  const loadChannels = async (startIdx, pageSize, idSort, enableTagMode, searchType, searchGroup) => {
     setLoading(true);
+    const params = new URLSearchParams({
+      p: `${startIdx}`,
+      page_size: `${pageSize}`,
+      id_sort: `${idSort}`,
+      tag_mode: `${enableTagMode}`
+    });
+    if (searchType !== '' && searchType !== null && searchType !== undefined) {
+      params.append('type', `${searchType}`);
+    }
+    if (searchGroup) {
+      params.append('group', searchGroup);
+    }
     const res = await API.get(
-      `/api/channel/?p=${startIdx}&page_size=${pageSize}&id_sort=${idSort}&tag_mode=${enableTagMode}`
+      `/api/channel/?${params.toString()}`
     );
     if (res === undefined) {
       return;
@@ -557,7 +582,7 @@ const ChannelsTable = () => {
   };
 
   const refresh = async () => {
-    await loadChannels(activePage - 1, pageSize, idSort, enableTagMode);
+    await loadChannels(activePage - 1, pageSize, idSort, enableTagMode, searchType, searchGroup);
   };
 
   useEffect(() => {
@@ -567,7 +592,7 @@ const ChannelsTable = () => {
       parseInt(localStorage.getItem('page-size')) || ITEMS_PER_PAGE;
     setIdSort(localIdSort);
     setPageSize(localPageSize);
-    loadChannels(0, localPageSize, localIdSort, enableTagMode)
+    loadChannels(0, localPageSize, localIdSort, enableTagMode, searchType, searchGroup)
       .then()
       .catch((reason) => {
         showError(reason);
@@ -723,15 +748,25 @@ const ChannelsTable = () => {
     }
   };
 
-  const searchChannels = async (searchKeyword, searchGroup, searchModel, enableTagMode) => {
-    if (searchKeyword === '' && searchGroup === '' && searchModel === '') {
-      await loadChannels(0, pageSize, idSort, enableTagMode);
+  const searchChannels = async (searchKeyword, searchType, searchGroup, searchModel, enableTagMode) => {
+    if (searchKeyword === '' && searchModel === '') {
+      await loadChannels(0, pageSize, idSort, enableTagMode, searchType, searchGroup);
       setActivePage(1);
       return;
     }
     setSearching(true);
+    const params = new URLSearchParams({
+      keyword: searchKeyword,
+      group: searchGroup,
+      model: searchModel,
+      id_sort: `${idSort}`,
+      tag_mode: `${enableTagMode}`
+    });
+    if (searchType !== '' && searchType !== null && searchType !== undefined) {
+      params.append('type', `${searchType}`);
+    }
     const res = await API.get(
-      `/api/channel/search?keyword=${searchKeyword}&group=${searchGroup}&model=${searchModel}&id_sort=${idSort}&tag_mode=${enableTagMode}`
+      `/api/channel/search?${params.toString()}`
     );
     const { success, message, data } = res.data;
     if (success) {
@@ -841,7 +876,7 @@ const ChannelsTable = () => {
     setActivePage(page);
     if (page === Math.ceil(channels.length / pageSize) + 1) {
       // In this case we have to load more data and then append them.
-      loadChannels(page - 1, pageSize, idSort, enableTagMode).then((r) => {
+      loadChannels(page - 1, pageSize, idSort, enableTagMode, searchType, searchGroup).then((r) => {
       });
     }
   };
@@ -850,7 +885,7 @@ const ChannelsTable = () => {
     localStorage.setItem('page-size', size + '');
     setPageSize(size);
     setActivePage(1);
-    loadChannels(0, size, idSort, enableTagMode)
+    loadChannels(0, size, idSort, enableTagMode, searchType, searchGroup)
       .then()
       .catch((reason) => {
         showError(reason);
@@ -937,7 +972,7 @@ const ChannelsTable = () => {
       />
       <Form
         onSubmit={() => {
-          searchChannels(searchKeyword, searchGroup, searchModel, enableTagMode);
+          searchChannels(searchKeyword, searchType, searchGroup, searchModel, enableTagMode);
         }}
         labelPosition="left"
       >
@@ -961,6 +996,28 @@ const ChannelsTable = () => {
               loading={searching}
               onChange={(v) => {
                 setSearchModel(v.trim());
+              }}
+            />
+            <Form.Select
+              field="search_type"
+              label="类型"
+              style={{ width: 176 }}
+              value={searchType}
+              placeholder="全部类型"
+              optionList={channelTypeOptions}
+              onChange={(v) => {
+                setSearchType(v ?? '');
+              }}
+            />
+            <Form.Select
+              field="search_group"
+              label="分组"
+              style={{ width: 176 }}
+              value={searchGroup}
+              placeholder="全部分组"
+              optionList={channelGroupOptions}
+              onChange={(v) => {
+                setSearchGroup(v ?? '');
               }}
             />
             <Button
@@ -996,7 +1053,7 @@ const ChannelsTable = () => {
             onChange={(v) => {
               localStorage.setItem('id-sort', v + '');
               setIdSort(v);
-              loadChannels(0, pageSize, v, enableTagMode)
+              loadChannels(0, pageSize, v, enableTagMode, searchType, searchGroup)
                 .then()
                 .catch((reason) => {
                   showError(reason);
