@@ -177,6 +177,11 @@ func TokenAuth() func(c *gin.Context) {
 		key := c.Request.Header.Get("Authorization")
 		parts := make([]string, 0)
 		key = strings.TrimPrefix(key, "Bearer ")
+		if key == "" {
+			// 兼容 Claude /v1/messages 客户端风格：x-api-key
+			key = c.Request.Header.Get("x-api-key")
+			key = strings.TrimPrefix(key, "Bearer ")
+		}
 		if key == "" || key == "midjourney-proxy" {
 			key = c.Request.Header.Get("mj-api-secret")
 			key = strings.TrimPrefix(key, "Bearer ")
