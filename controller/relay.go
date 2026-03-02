@@ -127,7 +127,7 @@ func Relay(c *gin.Context) {
 			return // 成功处理请求，直接返回
 		}
 
-		go processChannelError(c, channel.Id, channel.Type, channel.Name, originalModel, channel.GetAutoBan(), openaiErr)
+		go processChannelError(c, group, channel.Id, channel.Type, channel.Name, originalModel, channel.GetAutoBan(), openaiErr)
 
 		if !shouldRetry(c, openaiErr, common.RetryTimes-i) {
 			break
@@ -216,7 +216,7 @@ func WssRelay(c *gin.Context) {
 			return // 成功处理请求，直接返回
 		}
 
-		go processChannelError(c, channel.Id, channel.Type, channel.Name, originalModel, channel.GetAutoBan(), openaiErr)
+		go processChannelError(c, group, channel.Id, channel.Type, channel.Name, originalModel, channel.GetAutoBan(), openaiErr)
 
 		if !shouldRetry(c, openaiErr, common.RetryTimes-i) {
 			break
@@ -335,7 +335,7 @@ func shouldRetry(c *gin.Context, openaiErr *dto.OpenAIErrorWithStatusCode, retry
 	return true
 }
 
-func processChannelError(c *gin.Context, channelId int, channelType int, channelName string, originalModel string, autoBan bool, err *dto.OpenAIErrorWithStatusCode) {
+func processChannelError(c *gin.Context, group string, channelId int, channelType int, channelName string, originalModel string, autoBan bool, err *dto.OpenAIErrorWithStatusCode) {
 	if err == nil {
 		return
 	}
@@ -352,7 +352,6 @@ func processChannelError(c *gin.Context, channelId int, channelType int, channel
 
 	if service.ShouldDisableChannel(channelType, err) && autoBan {
 		// 检查是否还有其他可用渠道支持相同的模型
-		group := c.GetString("group")
 		hasOtherChannels := model.HasOtherAvailableChannels(group, originalModel, channelId)
 		if channelType == common.ChannelTypeCodex {
 			// Codex CLI 场景：只认为同类型（Codex）渠道可替代，避免误把“最后一个 Codex 渠道”禁用掉。
