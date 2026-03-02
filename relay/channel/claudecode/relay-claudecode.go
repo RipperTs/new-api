@@ -17,6 +17,11 @@ import (
 	"github.com/google/uuid"
 )
 
+func generateClaudeCodeUserID(apiKey string) string {
+	hash := sha256.Sum256([]byte(apiKey))
+	return fmt.Sprintf("user_%x_account__session_%s", hash, uuid.New().String())
+}
+
 func stopReasonClaude2OpenAI(reason string) string {
 	switch reason {
 	case "stop_sequence":
@@ -156,14 +161,13 @@ func RequestOpenAI2ClaudeMessage(textRequest dto.GeneralOpenAIRequest, info *rel
 		},
 	}
 
-	// 基于渠道 Key 生成稳定的 user_id
+	// 基于渠道 Key 生成 user_id
 	// 格式: user_<64hex>_account__session_<uuid>
 	key := ""
 	if info != nil {
 		key = info.ApiKey
 	}
-	hash := sha256.Sum256([]byte(key))
-	userID := fmt.Sprintf("user_%x_account__session_%s", hash, uuid.New().String())
+	userID := generateClaudeCodeUserID(key)
 	claudeRequest.Metadata = map[string]interface{}{
 		"user_id": userID,
 	}

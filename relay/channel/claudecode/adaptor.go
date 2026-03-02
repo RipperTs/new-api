@@ -168,12 +168,40 @@ func isThinkingSignatureError(msg string) bool {
 		strings.Contains(m, "invalid signature in thinking block")
 }
 
+func ensureMetadataUserID(body []byte, apiKey string) []byte {
+	var root map[string]any
+	if err := json.Unmarshal(body, &root); err != nil {
+		return body
+	}
+
+	metadata, ok := root["metadata"].(map[string]any)
+	if ok {
+		if userID, exists := metadata["user_id"].(string); exists && strings.TrimSpace(userID) != "" {
+			return body
+		}
+	} else {
+		metadata = make(map[string]any)
+	}
+
+	metadata["user_id"] = generateClaudeCodeUserID(apiKey)
+	root["metadata"] = metadata
+
+	patched, err := json.Marshal(root)
+	if err != nil {
+		return body
+	}
+	return patched
+}
+
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
 	// 读取请求体，便于重试时重复发送（Claude Code 偶发返回 thinking signature 相关 400）。
 	bodyBytes, err := io.ReadAll(requestBody)
 	if err != nil {
 		fmt.Printf("[ClaudeCode] Error reading request body: %v\n", err)
 		return nil, err
+	}
+	if info != nil {
+		bodyBytes = ensureMetadataUserID(bodyBytes, info.ApiKey)
 	}
 
 	doOnce := func() (*http.Response, error) {
