@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"one-api/common"
 	"one-api/dto"
-	"one-api/model"
 	"one-api/relay/channel/claudecode"
 	relaycommon "one-api/relay/common"
 	relayconstant "one-api/relay/constant"
@@ -130,13 +129,12 @@ func ClaudeCodeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithSta
 	}
 
 	httpResp := resp.(*http.Response)
+	statusCodeMappingStr := c.GetString("status_code_mapping")
 	if httpResp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(httpResp.Body)
-		_ = httpResp.Body.Close()
-		forwardClaudeRawResponse(c, httpResp, body)
-		maybeAutoDisableClaudeCodeChannel(c, relayInfo, httpResp.StatusCode, body)
+		openaiErr = service.RelayErrorHandler(httpResp)
+		service.ResetStatusCode(openaiErr, statusCodeMappingStr)
 		returnPreConsumedQuota(c, relayInfo, userQuota, preConsumedQuota)
-		return nil
+		return openaiErr
 	}
 
 	var usage *dto.Usage
@@ -302,76 +300,6 @@ func nonStreamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *r
 		usage.PromptTokens = info.PromptTokens
 	}
 	return usage, nil
-}
-
-type claudeAPIErrorEnvelope struct {
-	Type  string `json:"type"`
-	Error struct {
-		Type    string `json:"type"`
-		Message string `json:"message"`
-	} `json:"error"`
-}
-
-func maybeAutoDisableClaudeCodeChannel(c *gin.Context, info *relaycommon.RelayInfo, statusCode int, body []byte) {
-	if info == nil || info.ChannelType != common.ChannelTypeClaudeCode {
-		return
-	}
-	if !c.GetBool("auto_ban") {
-		return
-	}
-	if !common.AutomaticDisableChannelEnabled {
-		return
-	}
-
-	channelID := info.ChannelId
-	if channelID <= 0 {
-		return
-	}
-	channelName := c.GetString("channel_name")
-	originalModel := info.OriginModelName
-
-	openaiErr := &dto.OpenAIErrorWithStatusCode{
-		Error: dto.OpenAIError{
-			Message: fmt.Sprintf("upstream error, status=%d", statusCode),
-			Type:    "upstream_error",
-			Code:    "upstream_error",
-		},
-		StatusCode: statusCode,
-	}
-
-	var env claudeAPIErrorEnvelope
-	if len(body) > 0 && json.Unmarshal(body, &env) == nil {
-		if strings.TrimSpace(env.Error.Type) != "" {
-			openaiErr.Error.Type = strings.TrimSpace(env.Error.Type)
-			openaiErr.Error.Code = strings.TrimSpace(env.Error.Type)
-		}
-		if strings.TrimSpace(env.Error.Message) != "" {
-			openaiErr.Error.Message = strings.TrimSpace(env.Error.Message)
-		}
-	}
-
-	if !service.ShouldDisableChannel(common.ChannelTypeClaudeCode, openaiErr) {
-		return
-	}
-
-	// /v1/messages 只允许 Claude Code 渠道，替代也只看同类型，避免误禁“最后一个 Claude Code 渠道”
-	group := c.GetString("group")
-	hasOther := model.HasOtherAvailableChannelsByTypes(group, originalModel, channelID, []int{common.ChannelTypeClaudeCode})
-	if hasOther {
-		service.DisableChannel(channelID, channelName, openaiErr.Error.Message)
-	} else {
-		common.LogWarn(c, fmt.Sprintf("channel #%d is the last available Claude Code channel for model %s in group %s, skipping auto-disable", channelID, originalModel, group))
-	}
-}
-
-func forwardClaudeRawResponse(c *gin.Context, resp *http.Response, body []byte) {
-	contentType := resp.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = "application/json"
-	}
-	c.Writer.Header().Set("Content-Type", contentType)
-	c.Writer.WriteHeader(resp.StatusCode)
-	_, _ = c.Writer.Write(body)
 }
 
 func writeClaudeError(c *gin.Context, status int, errType, message string) {

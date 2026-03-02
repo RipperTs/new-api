@@ -276,6 +276,9 @@ func getChannel(c *gin.Context, group, originalModel string, retryCount int) (*m
 	var err error
 	if relayMode == relayconstant.RelayModeResponses {
 		channel, err = model.GetRandomSatisfiedChannelByTypes(group, originalModel, retryCount, []int{common.ChannelTypeOpenAI})
+	} else if relayMode == relayconstant.RelayModeClaudeMessages {
+		// /v1/messages 仅支持 Claude Code 渠道，重试时只在同类型渠道内选择。
+		channel, err = model.GetRandomSatisfiedChannelByTypes(group, originalModel, retryCount, []int{common.ChannelTypeClaudeCode})
 	} else if relayMode == relayconstant.RelayModeCodexCLI {
 		// Codex CLI 只支持 Codex 渠道：重试时也只从 Codex 渠道中选择，避免选到不兼容渠道导致本地错误而中断重试。
 		channel, err = model.GetRandomSatisfiedChannelByTypes(group, originalModel, retryCount, []int{common.ChannelTypeCodex})
