@@ -147,14 +147,8 @@ func RequestOpenAI2ClaudeMessage(textRequest dto.GeneralOpenAIRequest, info *rel
 	claudeMessages := make([]ClaudeMessage, 0)
 	isFirstMessage := true
 
-	// 处理 system 消息并设置固定的 system 数组
-	claudeRequest.System = []ClaudeContent{
-		{
-			Type:         "text",
-			Text:         "You are Claude Code, Anthropic's official CLI for Claude.",
-			CacheControl: &CacheControl{Type: "ephemeral"},
-		},
-	}
+	// system 固定注入统一在 adaptor.DoRequest 阶段处理，避免多处叠加。
+	claudeRequest.System = make([]ClaudeContent, 0)
 
 	// 基于渠道 Key 生成稳定的 user_id
 	// 格式: user_<64hex>_account__session_<uuid>
@@ -170,7 +164,7 @@ func RequestOpenAI2ClaudeMessage(textRequest dto.GeneralOpenAIRequest, info *rel
 
 	for _, message := range formatMessages {
 		if message.Role == "system" {
-			// 将用户的 system 消息追加到固定的 system 数组中
+			// 仅保留用户 system，固定 system 由 adaptor 统一注入。
 			var systemText string
 			if message.IsStringContent() {
 				systemText = message.StringContent()
