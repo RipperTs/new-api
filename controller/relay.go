@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"github.com/gin-gonic/gin"
@@ -127,7 +128,7 @@ func Relay(c *gin.Context) {
 			return // 成功处理请求，直接返回
 		}
 
-		go processChannelError(c, group, channel.Id, channel.Type, channel.Name, originalModel, channel.GetAutoBan(), openaiErr)
+		go processChannelError(requestId, group, channel.Id, channel.Type, channel.Name, originalModel, channel.GetAutoBan(), openaiErr)
 
 		if !shouldRetry(c, openaiErr, common.RetryTimes-i) {
 			break
@@ -216,7 +217,7 @@ func WssRelay(c *gin.Context) {
 			return // 成功处理请求，直接返回
 		}
 
-		go processChannelError(c, group, channel.Id, channel.Type, channel.Name, originalModel, channel.GetAutoBan(), openaiErr)
+		go processChannelError(requestId, group, channel.Id, channel.Type, channel.Name, originalModel, channel.GetAutoBan(), openaiErr)
 
 		if !shouldRetry(c, openaiErr, common.RetryTimes-i) {
 			break
@@ -335,18 +336,19 @@ func shouldRetry(c *gin.Context, openaiErr *dto.OpenAIErrorWithStatusCode, retry
 	return true
 }
 
-func processChannelError(c *gin.Context, group string, channelId int, channelType int, channelName string, originalModel string, autoBan bool, err *dto.OpenAIErrorWithStatusCode) {
+func processChannelError(requestId string, group string, channelId int, channelType int, channelName string, originalModel string, autoBan bool, err *dto.OpenAIErrorWithStatusCode) {
 	if err == nil {
 		return
 	}
+	ctx := context.WithValue(context.Background(), common.RequestIdKey, requestId)
 	// 本地错误（参数校验/客户端中断等）不应视为“渠道异常”，避免误报与误禁用
 	if err.LocalError || common.IsClientDisconnectMessage(err.Error.Message) {
-		common.LogInfo(c, fmt.Sprintf("relay aborted (channel #%d, status code: %d): %s", channelId, err.StatusCode, err.Error.Message))
+		common.LogInfo(ctx, fmt.Sprintf("relay aborted (channel #%d, status code: %d): %s", channelId, err.StatusCode, err.Error.Message))
 		return
 	}
 	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
 	// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
-	common.LogError(c, fmt.Sprintf("relay error (channel #%d, status code: %d): %s", channelId, err.StatusCode, err.Error.Message))
+	common.LogError(ctx, fmt.Sprintf("relay error (channel #%d, status code: %d): %s", channelId, err.StatusCode, err.Error.Message))
 	common.SendEmail(channelName+" 渠道调用异常!", common.GetEnvOrDefaultString("NOTIFICATION_EMAIL", "617498836@qq.com"),
 		fmt.Sprintf("通道 %s 调用失败，模型 %s，状态码 %d，错误信息 %s", channelName, originalModel, err.StatusCode, err.Error.Message))
 
@@ -367,7 +369,7 @@ func processChannelError(c *gin.Context, group string, channelId int, channelTyp
 			service.DisableChannel(channelId, channelName, err.Error.Message)
 		} else {
 			// 这是最后一个可用渠道，不禁用，只记录警告
-			common.LogWarn(c, fmt.Sprintf("channel #%d is the last available channel for model %s in group %s, skipping auto-disable", channelId, originalModel, group))
+			common.LogWarn(ctx, fmt.Sprintf("channel #%d is the last available channel for model %s in group %s, skipping auto-disable", channelId, originalModel, group))
 		}
 	}
 }
