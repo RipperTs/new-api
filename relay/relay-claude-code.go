@@ -427,6 +427,50 @@ func claudeMessageText(content any) string {
 	return ""
 }
 
+func patchMissingThinkingSignature(v any) bool {
+	switch t := v.(type) {
+	case map[string]any:
+		changed := false
+		if typ, ok := t["type"].(string); ok && typ == "thinking" {
+			if _, exists := t["signature"]; !exists {
+				t["signature"] = ""
+				changed = true
+			}
+		}
+		for _, sub := range t {
+			if patchMissingThinkingSignature(sub) {
+				changed = true
+			}
+		}
+		return changed
+	case []any:
+		changed := false
+		for _, sub := range t {
+			if patchMissingThinkingSignature(sub) {
+				changed = true
+			}
+		}
+		return changed
+	default:
+		return false
+	}
+}
+
+func patchMissingThinkingSignatureJSON(raw []byte) ([]byte, bool) {
+	var parsed any
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return raw, false
+	}
+	if !patchMissingThinkingSignature(parsed) {
+		return raw, false
+	}
+	patched, err := json.Marshal(parsed)
+	if err != nil {
+		return raw, false
+	}
+	return patched, true
+}
+
 func streamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*dto.Usage, error) {
 	service.SetEventStreamHeaders(c)
 	defer resp.Body.Close()
@@ -440,21 +484,36 @@ func streamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *rela
 	for scanner.Scan() {
 		line := scanner.Text()
 		info.SetFirstResponseTime()
-		if _, err := c.Writer.Write([]byte(line + "\n")); err != nil {
+		outputLine := line
+		parsedData := ""
+		if !strings.HasPrefix(line, "data:") {
+			parsedData = ""
+		} else {
+			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+			parsedData = data
+			if data != "" && data != "[DONE]" {
+				if patched, changed := patchMissingThinkingSignatureJSON([]byte(data)); changed {
+					patchedData := string(patched)
+					if strings.HasPrefix(line, "data: ") {
+						outputLine = "data: " + patchedData
+					} else {
+						outputLine = "data:" + patchedData
+					}
+					parsedData = patchedData
+				}
+			}
+		}
+		if _, err := c.Writer.Write([]byte(outputLine + "\n")); err != nil {
 			return nil, err
 		}
 		if flusher, ok := c.Writer.(http.Flusher); ok {
 			flusher.Flush()
 		}
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if data == "" || data == "[DONE]" {
+		if parsedData == "" || parsedData == "[DONE]" {
 			continue
 		}
 		var claudeResp claudecode.ClaudeResponse
-		if err := json.Unmarshal([]byte(data), &claudeResp); err != nil {
+		if err := json.Unmarshal([]byte(parsedData), &claudeResp); err != nil {
 			continue
 		}
 		sawAnyEvent = true
@@ -493,6 +552,9 @@ func nonStreamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *r
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if patched, changed := patchMissingThinkingSignatureJSON(body); changed {
+		body = patched
+	}
 
 	contentType := resp.Header.Get("Content-Type")
 	if contentType == "" {
