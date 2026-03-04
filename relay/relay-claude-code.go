@@ -268,6 +268,14 @@ func ClaudeCodeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithSta
 	if err = json.Unmarshal(jsonData, &bodyMap); err != nil {
 		bodyMap = nil
 	}
+	if bodyMap != nil {
+		if messagesRaw, ok := bodyMap["messages"]; ok {
+			if patchedMessages, changed := normalizeInvalidThinkingInMessagesRaw(messagesRaw); changed {
+				bodyMap["messages"] = patchedMessages
+				_ = json.Unmarshal(patchedMessages, &claudeReq.Messages)
+			}
+		}
+	}
 	patchedSystemRaw, shouldPatchSystem := applyClaudeCodeSystemRules(c, &claudeReq, bodyMap)
 
 	modelMapping := c.GetString("model_mapping")
@@ -427,13 +435,83 @@ func claudeMessageText(content any) string {
 	return ""
 }
 
+func isLikelyClaudeThinkingSignature(signature string) bool {
+	return strings.HasPrefix(strings.TrimSpace(signature), "ErUB")
+}
+
+func extractThinkingText(block map[string]any) string {
+	for _, key := range []string{"text", "thinking", "reasoning"} {
+		if v, ok := block[key].(string); ok && strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func normalizeInvalidThinkingInMessagesRaw(raw json.RawMessage) (json.RawMessage, bool) {
+	var messages []any
+	if err := json.Unmarshal(raw, &messages); err != nil {
+		return raw, false
+	}
+	changed := false
+	for i := range messages {
+		msg, ok := messages[i].(map[string]any)
+		if !ok {
+			continue
+		}
+		blocks, ok := msg["content"].([]any)
+		if !ok {
+			continue
+		}
+		normalized := make([]any, 0, len(blocks))
+		for _, block := range blocks {
+			bm, ok := block.(map[string]any)
+			if !ok {
+				normalized = append(normalized, block)
+				continue
+			}
+			typ, _ := bm["type"].(string)
+			if typ != "thinking" && typ != "redacted_thinking" {
+				normalized = append(normalized, block)
+				continue
+			}
+			signature, _ := bm["signature"].(string)
+			if isLikelyClaudeThinkingSignature(signature) {
+				normalized = append(normalized, block)
+				continue
+			}
+			if text := extractThinkingText(bm); text != "" {
+				normalized = append(normalized, map[string]any{
+					"type": "text",
+					"text": text,
+				})
+			}
+			changed = true
+		}
+		msg["content"] = normalized
+		messages[i] = msg
+	}
+	if !changed {
+		return raw, false
+	}
+	patched, err := json.Marshal(messages)
+	if err != nil {
+		return raw, false
+	}
+	return patched, true
+}
+
 func patchMissingThinkingSignature(v any) bool {
 	switch t := v.(type) {
 	case map[string]any:
 		changed := false
 		if typ, ok := t["type"].(string); ok && typ == "thinking" {
-			if _, exists := t["signature"]; !exists {
-				t["signature"] = ""
+			signatureRaw, exists := t["signature"]
+			if !exists {
+				t["signature"] = "skip_thought_signature_validator"
+				changed = true
+			} else if signature, ok := signatureRaw.(string); ok && strings.TrimSpace(signature) == "" {
+				t["signature"] = "skip_thought_signature_validator"
 				changed = true
 			}
 		}
