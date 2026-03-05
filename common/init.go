@@ -25,6 +25,13 @@ func printHelp() {
 func LoadEnv() {
 	flag.Parse()
 
+	// NOTE:
+	// .env is loaded in main() before calling LoadEnv(), but package-level vars
+	// in common/constants.go are initialized earlier. Refresh env-driven flags
+	// here to ensure values from .env take effect.
+	DebugEnabled = GetEnvOrDefaultBool("DEBUG", DebugEnabled)
+	MemoryCacheEnabled = GetEnvOrDefaultBool("MEMORY_CACHE_ENABLED", MemoryCacheEnabled)
+
 	if *PrintVersion {
 		fmt.Println(Version)
 		os.Exit(0)

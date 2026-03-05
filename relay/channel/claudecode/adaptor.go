@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"io"
 	"net/http"
+	"one-api/common"
 	"one-api/dto"
 	"one-api/relay/channel"
 	relaycommon "one-api/relay/common"
@@ -91,6 +92,9 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 	req.Set("Authorization", fmt.Sprintf("Bearer %s", apiKey))
 	req.Set("accept-language", "*")
 	req.Set("sec-fetch-mode", "cors")
+	if claudeMessagesDebugEnabledInAdaptor(info) {
+		common.LogInfo(c, fmt.Sprintf("[claude-messages][upstream_headers] content_type=%s accept=%s anthropic_version=%s anthropic_beta=%s x_app=%s user_agent=%s x_stainless_timeout=%s x_api_key=%s authorization=%s", req.Get("Content-Type"), req.Get("Accept"), req.Get("anthropic-version"), req.Get("anthropic-beta"), req.Get("x-app"), req.Get("User-Agent"), req.Get("X-Stainless-Timeout"), maskSecretForLog(req.Get("x-api-key")), maskAuthorizationForLog(req.Get("Authorization"))))
+	}
 
 	return nil
 }
@@ -200,6 +204,12 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 		fmt.Printf("[ClaudeCode] Error reading request body: %v\n", err)
 		return nil, err
 	}
+	debugEnabled := claudeMessagesDebugEnabledInAdaptor(info)
+	if debugEnabled {
+		reqURL, _ := a.GetRequestURL(info)
+		common.LogInfo(c, fmt.Sprintf("[claude-messages][upstream_request] method=%s url=%s body_bytes=%d", c.Request.Method, reqURL, len(bodyBytes)))
+		common.LogInfo(c, "[claude-messages][upstream_request_body] "+string(bodyBytes))
+	}
 	if info != nil {
 		bodyBytes = ensureMetadataUserID(bodyBytes, info.ApiKey)
 	}
@@ -208,9 +218,17 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 		return channel.DoApiRequest(a, c, info, bytes.NewReader(bodyBytes))
 	}
 
+	startTime := time.Now()
 	resp, err := doOnce()
+	firstAttemptCost := time.Since(startTime).Milliseconds()
 	if err != nil {
+		if debugEnabled {
+			common.LogError(c, fmt.Sprintf("[claude-messages][upstream_request_failed] attempt=1 cost_ms=%d err=%s", firstAttemptCost, err.Error()))
+		}
 		return nil, err
+	}
+	if debugEnabled && resp != nil {
+		common.LogInfo(c, fmt.Sprintf("[claude-messages][upstream_response] attempt=1 cost_ms=%d status=%d content_type=%s request_id=%s", firstAttemptCost, resp.StatusCode, resp.Header.Get("Content-Type"), firstNonEmpty(resp.Header.Get("request-id"), resp.Header.Get("x-request-id"), resp.Header.Get("anthropic-request-id"))))
 	}
 	if resp != nil && resp.StatusCode == http.StatusBadRequest {
 		// 读取 body 判断是否为可重试的 thinking signature 错误；读完后恢复 body，避免影响后续错误处理逻辑。
@@ -219,6 +237,9 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 		resp.Body = io.NopCloser(bytes.NewReader(b))
 		if readErr == nil {
 			msg := string(b)
+			if debugEnabled {
+				common.LogInfo(c, "[claude-messages][upstream_bad_request_body] "+msg)
+			}
 			if isThinkingSignatureError(msg) {
 				// 该错误可能是上游偶发，也可能是请求里携带了过期 signature。
 				// 重试时禁用 interleaved-thinking，并移除 thinking block，尽量做到“自动开新会话”效果。
@@ -228,15 +249,75 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 				if info != nil && info.RelayMode == relayconstant.RelayModeClaudeMessages {
 					retryBody = stripThinkingBlocks(bodyBytes)
 				}
+				if debugEnabled {
+					common.LogWarn(c, "[claude-messages][upstream_retry] reason=thinking_signature_error")
+					common.LogInfo(c, "[claude-messages][upstream_retry_body] "+string(retryBody))
+				}
+				retryStart := time.Now()
 				resp2, err2 := channel.DoApiRequest(a, c, info, bytes.NewReader(retryBody))
+				retryCost := time.Since(retryStart).Milliseconds()
 				if err2 == nil && resp2 != nil {
+					if debugEnabled {
+						common.LogInfo(c, fmt.Sprintf("[claude-messages][upstream_response] attempt=2 cost_ms=%d status=%d content_type=%s request_id=%s", retryCost, resp2.StatusCode, resp2.Header.Get("Content-Type"), firstNonEmpty(resp2.Header.Get("request-id"), resp2.Header.Get("x-request-id"), resp2.Header.Get("anthropic-request-id"))))
+					}
 					return resp2, nil
+				}
+				if debugEnabled {
+					if err2 != nil {
+						common.LogError(c, fmt.Sprintf("[claude-messages][upstream_retry_failed] cost_ms=%d err=%s", retryCost, err2.Error()))
+					} else {
+						common.LogError(c, fmt.Sprintf("[claude-messages][upstream_retry_failed] cost_ms=%d err=nil_resp", retryCost))
+					}
 				}
 				// 重试失败则返回首次响应，保留原始错误信息。
 			}
 		}
 	}
 	return resp, nil
+}
+
+func claudeMessagesDebugEnabledInAdaptor(info *relaycommon.RelayInfo) bool {
+	if !common.GetEnvOrDefaultBool("CLAUDE_MESSAGES_DEBUG", false) {
+		return false
+	}
+	if info == nil {
+		return false
+	}
+	return info.RelayMode == relayconstant.RelayModeClaudeMessages
+}
+
+func maskSecretForLog(secret string) string {
+	s := strings.TrimSpace(secret)
+	if s == "" {
+		return ""
+	}
+	if len(s) <= 8 {
+		return "****"
+	}
+	return s[:4] + "..." + s[len(s)-4:]
+}
+
+func maskAuthorizationForLog(authorization string) string {
+	s := strings.TrimSpace(authorization)
+	if s == "" {
+		return ""
+	}
+	prefix := "Bearer "
+	if strings.HasPrefix(strings.ToLower(s), strings.ToLower(prefix)) {
+		token := strings.TrimSpace(s[len(prefix):])
+		return prefix + maskSecretForLog(token)
+	}
+	return maskSecretForLog(s)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		v = strings.TrimSpace(v)
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *dto.OpenAIErrorWithStatusCode) {

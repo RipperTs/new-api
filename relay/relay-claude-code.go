@@ -234,6 +234,10 @@ func applyClaudeCodeSystemRules(c *gin.Context, claudeReq *claudecode.ClaudeRequ
 
 func ClaudeCodeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) {
 	relayInfo := relaycommon.GenRelayInfo(c)
+	debugEnabled := claudeMessagesDebugEnabled(relayInfo)
+	if debugEnabled {
+		common.LogInfo(c, fmt.Sprintf("[claude-messages][ingress] method=%s path=%s request_model=%s stream=%v max_tokens=%d channel_id=%d base_url=%s auth_mode=%s", c.Request.Method, c.Request.URL.Path, claudeReqModelFromBody(c), claudeReqStreamFromBody(c), claudeReqMaxTokensFromBody(c), relayInfo.ChannelId, relayInfo.BaseUrl, claudeAuthMode(relayInfo)))
+	}
 	if relayInfo.RelayMode != relayconstant.RelayModeClaudeMessages {
 		writeClaudeError(c, http.StatusBadRequest, "invalid_request_error", "invalid relay mode")
 		return nil
@@ -264,19 +268,27 @@ func ClaudeCodeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithSta
 		writeClaudeMaybeStreamError(c, relayInfo, http.StatusInternalServerError, "api_error", err.Error())
 		return nil
 	}
+	if debugEnabled {
+		common.LogInfo(c, "[claude-messages][request_body_raw] "+string(jsonData))
+	}
 	var bodyMap map[string]json.RawMessage
 	if err = json.Unmarshal(jsonData, &bodyMap); err != nil {
 		bodyMap = nil
 	}
+	thinkingPatched := false
 	if bodyMap != nil {
 		if messagesRaw, ok := bodyMap["messages"]; ok {
 			if patchedMessages, changed := normalizeInvalidThinkingInMessagesRaw(messagesRaw); changed {
 				bodyMap["messages"] = patchedMessages
 				_ = json.Unmarshal(patchedMessages, &claudeReq.Messages)
+				thinkingPatched = true
 			}
 		}
 	}
 	patchedSystemRaw, shouldPatchSystem := applyClaudeCodeSystemRules(c, &claudeReq, bodyMap)
+	if debugEnabled {
+		common.LogInfo(c, fmt.Sprintf("[claude-messages][request_patch] system_patched=%v thinking_patched=%v", shouldPatchSystem, thinkingPatched))
+	}
 
 	modelMapping := c.GetString("model_mapping")
 	if modelMapping != "" && modelMapping != "{}" {
@@ -348,15 +360,24 @@ func ClaudeCodeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithSta
 			jsonData = patched
 		}
 	}
+	if debugEnabled {
+		common.LogInfo(c, "[claude-messages][request_body_forward] "+string(jsonData))
+	}
 
 	resp, err := adaptor.DoRequest(c, relayInfo, bytes.NewBuffer(jsonData))
 	if err != nil {
 		returnPreConsumedQuota(c, relayInfo, userQuota, preConsumedQuota)
+		if debugEnabled {
+			common.LogError(c, "[claude-messages][upstream_request_error] "+err.Error())
+		}
 		writeClaudeMaybeStreamError(c, relayInfo, http.StatusInternalServerError, "api_error", err.Error())
 		return nil
 	}
 
 	httpResp := resp.(*http.Response)
+	if debugEnabled {
+		common.LogInfo(c, fmt.Sprintf("[claude-messages][upstream_response] status=%d content_type=%s request_id=%s", httpResp.StatusCode, httpResp.Header.Get("Content-Type"), httpResp.Header.Get("request-id")))
+	}
 	statusCodeMappingStr := c.GetString("status_code_mapping")
 	if httpResp.StatusCode != http.StatusOK {
 		openaiErr = service.RelayErrorHandler(httpResp)
@@ -372,13 +393,22 @@ func ClaudeCodeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithSta
 		usage, err = nonStreamClaudeCodePassthrough(c, httpResp, relayInfo)
 	}
 	if err != nil {
+		if debugEnabled {
+			common.LogError(c, "[claude-messages][passthrough_error] "+err.Error())
+		}
 		returnPreConsumedQuota(c, relayInfo, userQuota, preConsumedQuota)
 		// 客户端中断连接（broken pipe / connection reset）不应视为渠道失败，避免误报与误禁用
 		if common.IsClientDisconnectError(err) {
+			if debugEnabled {
+				common.LogInfo(c, "[claude-messages][passthrough_end] reason=client_disconnect")
+			}
 			return nil
 		}
 		writeClaudeMaybeStreamError(c, relayInfo, http.StatusInternalServerError, "api_error", err.Error())
 		return nil
+	}
+	if debugEnabled && usage != nil {
+		common.LogInfo(c, fmt.Sprintf("[claude-messages][request_done] upstream_model=%s prompt_tokens=%d completion_tokens=%d total_tokens=%d", relayInfo.UpstreamModelName, usage.PromptTokens, usage.CompletionTokens, usage.TotalTokens))
 	}
 
 	postConsumeQuota(c, relayInfo, claudeReq.Model, usage, ratio, preConsumedQuota, userQuota, modelRatio, groupRatio, modelPrice, getModelPriceSuccess, "")
@@ -552,18 +582,31 @@ func patchMissingThinkingSignatureJSON(raw []byte) ([]byte, bool) {
 func streamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*dto.Usage, error) {
 	service.SetEventStreamHeaders(c)
 	defer resp.Body.Close()
+	debugEnabled := claudeMessagesDebugEnabled(info)
 
 	usage := &dto.Usage{}
 	var responseText strings.Builder
+	var streamRawData strings.Builder
 	sawAnyEvent := false
+	sawMessageStop := false
+	sawToolUse := false
+	sawToolUseInCurrentMessage := false
+	eventCount := 0
+	lastEventType := ""
+	lastStopReason := ""
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	if debugEnabled {
+		common.LogInfo(c, fmt.Sprintf("[claude-messages][stream_start] status=%d content_type=%s", resp.StatusCode, resp.Header.Get("Content-Type")))
+	}
 	for scanner.Scan() {
 		line := scanner.Text()
 		info.SetFirstResponseTime()
 		outputLine := line
 		parsedData := ""
+		parsedOK := false
+		var claudeResp claudecode.ClaudeResponse
 		if !strings.HasPrefix(line, "data:") {
 			parsedData = ""
 		} else {
@@ -581,6 +624,43 @@ func streamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *rela
 				}
 			}
 		}
+		if parsedData != "" && parsedData != "[DONE]" {
+			if err := json.Unmarshal([]byte(parsedData), &claudeResp); err != nil {
+				if debugEnabled {
+					common.LogError(c, "[claude-messages][stream_unmarshal_error] "+err.Error()+" | data="+parsedData)
+				}
+			} else {
+				parsedOK = true
+				if claudeResp.Type == "message_start" {
+					sawToolUseInCurrentMessage = false
+				}
+				if claudeResp.Type == "content_block_start" &&
+					claudeResp.ContentBlock != nil &&
+					strings.TrimSpace(claudeResp.ContentBlock.Type) == "tool_use" {
+					sawToolUse = true
+					sawToolUseInCurrentMessage = true
+				}
+				if claudeResp.Type == "message_delta" &&
+					claudeResp.Delta != nil &&
+					claudeResp.Delta.StopReason != nil &&
+					strings.TrimSpace(*claudeResp.Delta.StopReason) == "end_turn" &&
+					sawToolUseInCurrentMessage {
+					fixedStopReason := "tool_use"
+					claudeResp.Delta.StopReason = &fixedStopReason
+					if patched, err := json.Marshal(claudeResp); err == nil {
+						parsedData = string(patched)
+						if strings.HasPrefix(line, "data: ") {
+							outputLine = "data: " + parsedData
+						} else {
+							outputLine = "data:" + parsedData
+						}
+						if debugEnabled {
+							common.LogWarn(c, "[claude-messages][stream_patch] patched message_delta.stop_reason end_turn -> tool_use due to tool_use content block")
+						}
+					}
+				}
+			}
+		}
 		if _, err := c.Writer.Write([]byte(outputLine + "\n")); err != nil {
 			return nil, err
 		}
@@ -588,13 +668,28 @@ func streamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *rela
 			flusher.Flush()
 		}
 		if parsedData == "" || parsedData == "[DONE]" {
+			if debugEnabled && parsedData == "[DONE]" {
+				common.LogInfo(c, "[claude-messages][stream_event_done] [DONE]")
+			}
 			continue
 		}
-		var claudeResp claudecode.ClaudeResponse
-		if err := json.Unmarshal([]byte(parsedData), &claudeResp); err != nil {
+		streamRawData.WriteString(parsedData)
+		streamRawData.WriteString("\n")
+		if !parsedOK {
 			continue
 		}
 		sawAnyEvent = true
+		eventCount++
+		lastEventType = strings.TrimSpace(claudeResp.Type)
+		if claudeResp.Type == "message_stop" {
+			sawMessageStop = true
+		}
+		if claudeResp.Type == "message_delta" && claudeResp.Delta != nil && claudeResp.Delta.StopReason != nil {
+			lastStopReason = strings.TrimSpace(*claudeResp.Delta.StopReason)
+		}
+		if debugEnabled {
+			common.LogInfo(c, fmt.Sprintf("[claude-messages][stream_event] idx=%d type=%s stop_reason=%s payload=%s", eventCount, lastEventType, lastStopReason, parsedData))
+		}
 		if claudeResp.Type == "message_start" && claudeResp.Message != nil {
 			info.UpstreamModelName = claudeResp.Message.Model
 			usage.PromptTokens = claudeResp.Message.Usage.InputTokens
@@ -606,10 +701,18 @@ func streamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *rela
 		}
 	}
 	if err := scanner.Err(); err != nil {
+		if debugEnabled {
+			common.LogError(c, fmt.Sprintf("[claude-messages][stream_end] reason=scanner_error event_count=%d saw_any_event=%v saw_message_stop=%v last_event_type=%s last_stop_reason=%s err=%s", eventCount, sawAnyEvent, sawMessageStop, lastEventType, lastStopReason, err.Error()))
+			common.LogInfo(c, "[claude-messages][stream_response_text] "+responseText.String())
+			common.LogInfo(c, "[claude-messages][stream_response_raw] "+streamRawData.String())
+		}
 		return nil, err
 	}
 	// 流式响应结束但没有任何有效事件：通常是上游异常断流，避免客户端“无输出/静默”。
 	if !sawAnyEvent {
+		if debugEnabled {
+			common.LogError(c, "[claude-messages][stream_end] reason=unexpected_eof_no_event saw_any_event=false")
+		}
 		return nil, io.ErrUnexpectedEOF
 	}
 
@@ -621,10 +724,23 @@ func streamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *rela
 		usage.CompletionTokens = u.CompletionTokens
 		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 	}
+	if debugEnabled {
+		endReason := "normal"
+		if !sawMessageStop {
+			endReason = "upstream_stream_eof_without_message_stop"
+		}
+		if lastStopReason == "end_turn" && !sawToolUse && isLikelyWaitingPlaceholder(responseText.String()) {
+			common.LogWarn(c, "[claude-messages][stream_suspect] stop_reason=end_turn without tool_use and response looks like waiting placeholder")
+		}
+		common.LogInfo(c, fmt.Sprintf("[claude-messages][stream_end] reason=%s event_count=%d saw_any_event=%v saw_message_stop=%v last_event_type=%s last_stop_reason=%s prompt_tokens=%d completion_tokens=%d total_tokens=%d", endReason, eventCount, sawAnyEvent, sawMessageStop, lastEventType, lastStopReason, usage.PromptTokens, usage.CompletionTokens, usage.TotalTokens))
+		common.LogInfo(c, "[claude-messages][stream_response_text] "+responseText.String())
+		common.LogInfo(c, "[claude-messages][stream_response_raw] "+streamRawData.String())
+	}
 	return usage, nil
 }
 
 func nonStreamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*dto.Usage, error) {
+	debugEnabled := claudeMessagesDebugEnabled(info)
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
@@ -632,6 +748,23 @@ func nonStreamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *r
 	defer resp.Body.Close()
 	if patched, changed := patchMissingThinkingSignatureJSON(body); changed {
 		body = patched
+	}
+
+	var claudeResp claudecode.ClaudeResponse
+	if err := json.Unmarshal(body, &claudeResp); err != nil {
+		return nil, err
+	}
+	if claudeResp.StopReason == "end_turn" && hasToolUseInContent(claudeResp.Content) {
+		claudeResp.StopReason = "tool_use"
+		if patched, marshalErr := json.Marshal(claudeResp); marshalErr == nil {
+			body = patched
+			if debugEnabled {
+				common.LogWarn(c, "[claude-messages][non_stream_patch] patched stop_reason end_turn -> tool_use due to tool_use content block")
+			}
+		}
+	}
+	if claudeResp.StopReason == "end_turn" && !hasToolUseInContent(claudeResp.Content) && isLikelyWaitingPlaceholder(claudeMessageResponseText(claudeResp.Content)) {
+		common.LogWarn(c, "[claude-messages][non_stream_suspect] stop_reason=end_turn without tool_use and response looks like waiting placeholder")
 	}
 
 	contentType := resp.Header.Get("Content-Type")
@@ -643,10 +776,8 @@ func nonStreamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *r
 	if _, err := c.Writer.Write(body); err != nil {
 		return nil, err
 	}
-
-	var claudeResp claudecode.ClaudeResponse
-	if err := json.Unmarshal(body, &claudeResp); err != nil {
-		return nil, err
+	if debugEnabled {
+		common.LogInfo(c, "[claude-messages][non_stream_response_raw] "+string(body))
 	}
 	if claudeResp.Model != "" {
 		info.UpstreamModelName = claudeResp.Model
@@ -659,7 +790,51 @@ func nonStreamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *r
 	if usage.PromptTokens == 0 {
 		usage.PromptTokens = info.PromptTokens
 	}
+	if debugEnabled {
+		common.LogInfo(c, fmt.Sprintf("[claude-messages][non_stream_end] model=%s prompt_tokens=%d completion_tokens=%d total_tokens=%d", info.UpstreamModelName, usage.PromptTokens, usage.CompletionTokens, usage.TotalTokens))
+	}
 	return usage, nil
+}
+
+func hasToolUseInContent(content []claudecode.ClaudeMediaMessage) bool {
+	for _, block := range content {
+		if strings.TrimSpace(block.Type) == "tool_use" {
+			return true
+		}
+	}
+	return false
+}
+
+func claudeMessageResponseText(content []claudecode.ClaudeMediaMessage) string {
+	var sb strings.Builder
+	for _, block := range content {
+		if strings.TrimSpace(block.Type) == "text" && strings.TrimSpace(block.Text) != "" {
+			sb.WriteString(block.Text)
+		}
+	}
+	return sb.String()
+}
+
+func isLikelyWaitingPlaceholder(text string) bool {
+	t := strings.ToLower(strings.TrimSpace(text))
+	if t == "" {
+		return false
+	}
+	keywords := []string{
+		"请稍候",
+		"稍候",
+		"正在运行中",
+		"正在执行中",
+		"please wait",
+		"in progress",
+		"working on it",
+	}
+	for _, keyword := range keywords {
+		if strings.Contains(t, keyword) {
+			return true
+		}
+	}
+	return false
 }
 
 func writeClaudeError(c *gin.Context, status int, errType, message string) {
@@ -677,6 +852,9 @@ func writeClaudeError(c *gin.Context, status int, errType, message string) {
 func writeClaudeMaybeStreamError(c *gin.Context, info *relaycommon.RelayInfo, status int, errType, message string) {
 	if c == nil || c.Writer.Written() {
 		return
+	}
+	if claudeMessagesDebugEnabled(info) {
+		common.LogError(c, fmt.Sprintf("[claude-messages][write_error] status=%d type=%s message=%s is_stream=%v", status, errType, message, info != nil && info.IsStream))
 	}
 	if info != nil && info.IsStream {
 		service.SetEventStreamHeaders(c)
@@ -720,4 +898,76 @@ func mapOpenAIErrorTypeToClaude(t string) string {
 	default:
 		return "api_error"
 	}
+}
+
+func claudeMessagesDebugEnabled(info *relaycommon.RelayInfo) bool {
+	if !common.GetEnvOrDefaultBool("CLAUDE_MESSAGES_DEBUG", false) {
+		return false
+	}
+	if info == nil {
+		return false
+	}
+	return info.RelayMode == relayconstant.RelayModeClaudeMessages
+}
+
+func claudeReqModelFromBody(c *gin.Context) string {
+	if c == nil {
+		return ""
+	}
+	body, err := common.GetRequestBody(c)
+	if err != nil {
+		return ""
+	}
+	var m map[string]any
+	if err = json.Unmarshal(body, &m); err != nil {
+		return ""
+	}
+	v, _ := m["model"].(string)
+	return strings.TrimSpace(v)
+}
+
+func claudeReqStreamFromBody(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	body, err := common.GetRequestBody(c)
+	if err != nil {
+		return false
+	}
+	var m map[string]any
+	if err = json.Unmarshal(body, &m); err != nil {
+		return false
+	}
+	v, _ := m["stream"].(bool)
+	return v
+}
+
+func claudeReqMaxTokensFromBody(c *gin.Context) int {
+	if c == nil {
+		return 0
+	}
+	body, err := common.GetRequestBody(c)
+	if err != nil {
+		return 0
+	}
+	var m map[string]any
+	if err = json.Unmarshal(body, &m); err != nil {
+		return 0
+	}
+	v, ok := m["max_tokens"].(float64)
+	if !ok {
+		return 0
+	}
+	return int(v)
+}
+
+func claudeAuthMode(info *relaycommon.RelayInfo) string {
+	if info == nil || info.ChannelSetting == nil {
+		return "api_key"
+	}
+	v, ok := info.ChannelSetting["auth_mode"].(string)
+	if !ok || strings.TrimSpace(v) == "" {
+		return "api_key"
+	}
+	return strings.TrimSpace(v)
 }
