@@ -178,6 +178,8 @@ func isThinkingTypeValueError(msg string) bool {
 }
 
 func patchThinkingTypeForCompat(body []byte) ([]byte, bool) {
+	const minThinkingBudgetTokens = 1024
+
 	var root map[string]any
 	if err := json.Unmarshal(body, &root); err != nil {
 		return body, false
@@ -192,24 +194,90 @@ func patchThinkingTypeForCompat(body []byte) ([]byte, bool) {
 		return body, false
 	}
 
+	changed := false
 	typeValue := strings.ToLower(strings.TrimSpace(rawType))
 	switch typeValue {
 	case "adaptive":
 		thinkingMap["type"] = "enabled"
+		changed = true
 	case "disable", "disabled", "off", "none":
 		thinkingMap["type"] = "disabled"
+		changed = true
 	case "enable", "enabled":
 		thinkingMap["type"] = "enabled"
+		if rawType != "enabled" {
+			changed = true
+		}
 	default:
 		return body, false
 	}
 
+	if thinkingType, _ := thinkingMap["type"].(string); thinkingType == "enabled" {
+		budgetValid := false
+		if rawBudget, hasBudget := thinkingMap["budget_tokens"]; hasBudget {
+			switch v := rawBudget.(type) {
+			case float64:
+				budgetValid = v > 0
+			case float32:
+				budgetValid = v > 0
+			case int:
+				budgetValid = v > 0
+			case int64:
+				budgetValid = v > 0
+			case int32:
+				budgetValid = v > 0
+			case json.Number:
+				if parsed, err := v.Int64(); err == nil {
+					budgetValid = parsed > 0
+				}
+			}
+		}
+		if !budgetValid {
+			budget := minThinkingBudgetTokens
+			if rawMaxTokens, exists := root["max_tokens"]; exists {
+				maxTokens := 0
+				switch v := rawMaxTokens.(type) {
+				case float64:
+					maxTokens = int(v)
+				case float32:
+					maxTokens = int(v)
+				case int:
+					maxTokens = v
+				case int64:
+					maxTokens = int(v)
+				case int32:
+					maxTokens = int(v)
+				case json.Number:
+					if parsed, err := v.Int64(); err == nil {
+						maxTokens = int(parsed)
+					}
+				}
+				// Anthropic 要求 budget_tokens < max_tokens，若 max_tokens 过小则尽量取 max_tokens-1。
+				if maxTokens > 0 && budget >= maxTokens {
+					if maxTokens > 1 {
+						budget = maxTokens - 1
+					} else {
+						budget = 1
+					}
+				}
+			}
+			thinkingMap["budget_tokens"] = budget
+			changed = true
+		}
+	} else if _, hasBudget := thinkingMap["budget_tokens"]; hasBudget {
+		delete(thinkingMap, "budget_tokens")
+		changed = true
+	}
+
+	if !changed {
+		return body, false
+	}
 	root["thinking"] = thinkingMap
 	patched, err := json.Marshal(root)
 	if err != nil {
 		return body, false
 	}
-	return patched, true
+	return patched, changed
 }
 
 func ensureMetadataUserID(body []byte, apiKey string) []byte {
