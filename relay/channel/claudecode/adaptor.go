@@ -80,11 +80,16 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 	// interleaved-thinking 会引入 thinking signature 校验。
 	// OpenAI 兼容模式下我们无法可靠透传 thinking block/signature，因此默认禁用；
 	// 仅在 Claude /v1/messages 原生请求时开启，保持与 Claude Code CLI 行为一致。
-	beta := "claude-code-20250219,oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14"
-	if !c.GetBool("claude_disable_interleaved_thinking") && info != nil && info.RelayMode == relayconstant.RelayModeClaudeMessages {
-		beta = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14"
+	clientBeta := strings.TrimSpace(c.GetHeader("anthropic-beta"))
+	if c.GetBool("claude_is_official_cli") && clientBeta != "" {
+		req.Set("anthropic-beta", clientBeta)
+	} else {
+		beta := "claude-code-20250219,oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14"
+		if !c.GetBool("claude_disable_interleaved_thinking") && info != nil && info.RelayMode == relayconstant.RelayModeClaudeMessages {
+			beta = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14"
+		}
+		req.Set("anthropic-beta", beta)
 	}
-	req.Set("anthropic-beta", beta)
 	req.Set("X-Stainless-Runtime-Version", "v20.18.1")
 	req.Set("anthropic-dangerous-direct-browser-access", "true")
 	// 兼容验证要求的额外头

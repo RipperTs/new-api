@@ -279,6 +279,11 @@ func ClaudeCodeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithSta
 			bodyMap["tools"] = json.RawMessage("[]")
 		}
 	}
+	var userSystemRaw json.RawMessage
+	if bodyMap != nil {
+		userSystemRaw = bodyMap["system"]
+	}
+	c.Set("claude_is_official_cli", isOfficialClaudeCLIRequest(c, userSystemRaw, claudeReq.System))
 	patchedSystemRaw, shouldPatchSystem := applyClaudeCodeSystemRules(c, &claudeReq, bodyMap)
 
 	modelMapping := c.GetString("model_mapping")
