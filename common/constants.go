@@ -3,6 +3,7 @@ package common
 import (
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -73,6 +74,8 @@ var SMTPSSLEnabled = false
 var SMTPAccount = ""
 var SMTPFrom = ""
 var SMTPToken = ""
+var NotificationEmail = strings.TrimSpace(os.Getenv("NOTIFICATION_EMAIL"))
+var NotificationCcEmails = SplitEmailRecipients(os.Getenv("NOTIFICATION_CC_EMAILS"))
 
 var GitHubClientId = ""
 var GitHubClientSecret = ""

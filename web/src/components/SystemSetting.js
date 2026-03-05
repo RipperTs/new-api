@@ -8,7 +8,13 @@ import {
   Message,
   Modal,
 } from 'semantic-ui-react';
-import { API, removeTrailingSlash, showError, verifyJSON } from '../helpers';
+import {
+  API,
+  removeTrailingSlash,
+  showError,
+  showSuccess,
+  verifyJSON,
+} from '../helpers';
 
 import { useTheme } from '../context/Theme';
 
@@ -26,6 +32,8 @@ const SystemSetting = () => {
     SMTPAccount: '',
     SMTPFrom: '',
     SMTPToken: '',
+    NotificationEmail: '',
+    NotificationCcEmails: '',
     ServerAddress: '',
     WorkerUrl: '',
     WorkerValidKey: '',
@@ -153,6 +161,8 @@ const SystemSetting = () => {
       name === 'ServerAddress' ||
       name === 'WorkerUrl' ||
       name === 'WorkerValidKey' ||
+      name === 'NotificationEmail' ||
+      name === 'NotificationCcEmails' ||
       name === 'EpayId' ||
       name === 'EpayKey' ||
       name === 'Price' ||
@@ -235,6 +245,30 @@ const SystemSetting = () => {
     ) {
       await updateOption('SMTPToken', inputs.SMTPToken);
     }
+  };
+
+  const submitNotificationSettings = async () => {
+    if (originInputs['NotificationEmail'] !== inputs.NotificationEmail) {
+      await updateOption('NotificationEmail', inputs.NotificationEmail);
+    }
+    if (originInputs['NotificationCcEmails'] !== inputs.NotificationCcEmails) {
+      await updateOption('NotificationCcEmails', inputs.NotificationCcEmails);
+    }
+  };
+
+  const sendNotificationMail = async () => {
+    setLoading(true);
+    const res = await API.post('/api/option/notification/mail', {
+      notification_email: inputs.NotificationEmail,
+      notification_cc_emails: inputs.NotificationCcEmails,
+    });
+    const { success, message } = res.data;
+    if (success) {
+      showSuccess('通知邮件已发送，请检查相关邮箱');
+    } else {
+      showError(message);
+    }
+    setLoading(false);
   };
 
   const submitEmailDomainWhitelist = async () => {
@@ -664,6 +698,37 @@ const SystemSetting = () => {
             />
           </Form.Group>
           <Form.Button onClick={submitSMTP}>保存 SMTP 设置</Form.Button>
+          <Divider />
+          <Header as='h3' inverted={isDark}>
+            通知设置
+            <Header.Subheader>用于接收请求异常等系统邮件通知</Header.Subheader>
+          </Header>
+          <Form.Group widths={2}>
+            <Form.Input
+              label='目标邮箱'
+              name='NotificationEmail'
+              onChange={handleInputChange}
+              autoComplete='new-password'
+              value={inputs.NotificationEmail}
+              placeholder='例如：admin@example.com'
+            />
+            <Form.Input
+              label='抄送邮箱'
+              name='NotificationCcEmails'
+              onChange={handleInputChange}
+              autoComplete='new-password'
+              value={inputs.NotificationCcEmails}
+              placeholder='多个邮箱用英文逗号或分号分隔'
+            />
+          </Form.Group>
+          <Form.Group>
+            <Form.Button onClick={submitNotificationSettings}>
+              保存通知设置
+            </Form.Button>
+            <Form.Button type='button' onClick={sendNotificationMail}>
+              发送确认邮件
+            </Form.Button>
+          </Form.Group>
           <Divider />
           <Header as='h3' inverted={isDark}>
             配置 GitHub OAuth App

@@ -7,6 +7,7 @@ import (
 	"one-api/model"
 	"one-api/setting"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -92,6 +93,26 @@ func UpdateOption(c *gin.Context) {
 			})
 			return
 		}
+	case "NotificationEmail":
+		err = common.Validate.Var(strings.TrimSpace(option.Value), "omitempty,email")
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "通知目标邮箱格式不正确",
+			})
+			return
+		}
+	case "NotificationCcEmails":
+		for _, email := range common.SplitEmailRecipients(option.Value) {
+			err = common.Validate.Var(email, "email")
+			if err != nil {
+				c.JSON(http.StatusOK, gin.H{
+					"success": false,
+					"message": "抄送邮箱格式不正确",
+				})
+				return
+			}
+		}
 	}
 	err = model.UpdateOption(option.Key, option.Value)
 	if err != nil {
@@ -106,4 +127,56 @@ func UpdateOption(c *gin.Context) {
 		"message": "",
 	})
 	return
+}
+
+type NotificationMailRequest struct {
+	NotificationEmail    string `json:"notification_email"`
+	NotificationCcEmails string `json:"notification_cc_emails"`
+}
+
+func SendNotificationMail(c *gin.Context) {
+	var req NotificationMailRequest
+	err := json.NewDecoder(c.Request.Body).Decode(&req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "无效的参数",
+		})
+		return
+	}
+	req.NotificationEmail = strings.TrimSpace(req.NotificationEmail)
+	if err = common.Validate.Var(req.NotificationEmail, "required,email"); err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "请填写正确的通知目标邮箱",
+		})
+		return
+	}
+	for _, email := range common.SplitEmailRecipients(req.NotificationCcEmails) {
+		if err = common.Validate.Var(email, "email"); err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "抄送邮箱格式不正确",
+			})
+			return
+		}
+	}
+
+	subject := common.SystemName + "通知已送达"
+	content := "<p>您好，当前系统的异常邮件通知链路已可正常投递。</p>" +
+		"<p>系统名称：" + common.SystemName + "</p>" +
+		"<p>送达时间：" + time.Now().Format("2006-01-02 15:04:05") + "</p>" +
+		"<p>如您收到此邮件，说明通知邮箱配置已经生效。</p>"
+	err = common.SendEmailWithCcNoCache(subject, req.NotificationEmail, req.NotificationCcEmails, content)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+	})
 }

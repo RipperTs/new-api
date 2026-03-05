@@ -54,6 +54,8 @@ func InitOptionMap() {
 	common.OptionMap["SMTPAccount"] = ""
 	common.OptionMap["SMTPToken"] = ""
 	common.OptionMap["SMTPSSLEnabled"] = strconv.FormatBool(common.SMTPSSLEnabled)
+	common.OptionMap["NotificationEmail"] = common.NotificationEmail
+	common.OptionMap["NotificationCcEmails"] = common.JoinEmailRecipients(common.NotificationCcEmails)
 	common.OptionMap["Notice"] = ""
 	common.OptionMap["About"] = ""
 	common.OptionMap["HomePageContent"] = ""
@@ -244,6 +246,10 @@ func updateOptionMap(key string, value string) (err error) {
 		common.SMTPFrom = value
 	case "SMTPToken":
 		common.SMTPToken = value
+	case "NotificationEmail":
+		common.NotificationEmail = strings.TrimSpace(value)
+	case "NotificationCcEmails":
+		common.NotificationCcEmails = common.SplitEmailRecipients(value)
 	case "ServerAddress":
 		setting.ServerAddress = value
 	case "WorkerUrl":

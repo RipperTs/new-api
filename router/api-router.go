@@ -84,6 +84,7 @@ func SetApiRouter(router *gin.Engine) {
 		{
 			optionRoute.GET("/", controller.GetOptions)
 			optionRoute.PUT("/", controller.UpdateOption)
+			optionRoute.POST("/notification/mail", controller.SendNotificationMail)
 			optionRoute.POST("/rest_model_ratio", controller.ResetModelRatio)
 		}
 		channelRoute := apiRouter.Group("/channel")
