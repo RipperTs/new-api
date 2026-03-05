@@ -172,6 +172,46 @@ func isThinkingSignatureError(msg string) bool {
 		strings.Contains(m, "invalid signature in thinking block")
 }
 
+func isThinkingTypeValueError(msg string) bool {
+	m := strings.ToLower(msg)
+	return strings.Contains(m, "thinking type should be enabled or disabled")
+}
+
+func patchThinkingTypeForCompat(body []byte) ([]byte, bool) {
+	var root map[string]any
+	if err := json.Unmarshal(body, &root); err != nil {
+		return body, false
+	}
+
+	thinkingMap, ok := root["thinking"].(map[string]any)
+	if !ok {
+		return body, false
+	}
+	rawType, ok := thinkingMap["type"].(string)
+	if !ok {
+		return body, false
+	}
+
+	typeValue := strings.ToLower(strings.TrimSpace(rawType))
+	switch typeValue {
+	case "adaptive":
+		thinkingMap["type"] = "enabled"
+	case "disable", "disabled", "off", "none":
+		thinkingMap["type"] = "disabled"
+	case "enable", "enabled":
+		thinkingMap["type"] = "enabled"
+	default:
+		return body, false
+	}
+
+	root["thinking"] = thinkingMap
+	patched, err := json.Marshal(root)
+	if err != nil {
+		return body, false
+	}
+	return patched, true
+}
+
 func ensureMetadataUserID(body []byte, apiKey string) []byte {
 	var root map[string]any
 	if err := json.Unmarshal(body, &root); err != nil {
@@ -270,6 +310,30 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 					}
 				}
 				// 重试失败则返回首次响应，保留原始错误信息。
+			} else if isThinkingTypeValueError(msg) {
+				retryBody, changed := patchThinkingTypeForCompat(bodyBytes)
+				if changed {
+					if debugEnabled {
+						common.LogWarn(c, "[claude-messages][upstream_retry] reason=thinking_type_incompatible")
+						common.LogInfo(c, "[claude-messages][upstream_retry_body] "+string(retryBody))
+					}
+					retryStart := time.Now()
+					resp2, err2 := channel.DoApiRequest(a, c, info, bytes.NewReader(retryBody))
+					retryCost := time.Since(retryStart).Milliseconds()
+					if err2 == nil && resp2 != nil {
+						if debugEnabled {
+							common.LogInfo(c, fmt.Sprintf("[claude-messages][upstream_response] attempt=2 cost_ms=%d status=%d content_type=%s request_id=%s", retryCost, resp2.StatusCode, resp2.Header.Get("Content-Type"), firstNonEmpty(resp2.Header.Get("request-id"), resp2.Header.Get("x-request-id"), resp2.Header.Get("anthropic-request-id"))))
+						}
+						return resp2, nil
+					}
+					if debugEnabled {
+						if err2 != nil {
+							common.LogError(c, fmt.Sprintf("[claude-messages][upstream_retry_failed] cost_ms=%d err=%s", retryCost, err2.Error()))
+						} else {
+							common.LogError(c, fmt.Sprintf("[claude-messages][upstream_retry_failed] cost_ms=%d err=nil_resp", retryCost))
+						}
+					}
+				}
 			}
 		}
 	}
