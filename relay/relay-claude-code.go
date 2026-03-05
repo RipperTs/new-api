@@ -275,6 +275,9 @@ func ClaudeCodeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithSta
 				_ = json.Unmarshal(patchedMessages, &claudeReq.Messages)
 			}
 		}
+		if _, ok := bodyMap["tools"]; !ok {
+			bodyMap["tools"] = json.RawMessage("[]")
+		}
 	}
 	patchedSystemRaw, shouldPatchSystem := applyClaudeCodeSystemRules(c, &claudeReq, bodyMap)
 
