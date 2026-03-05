@@ -79,10 +79,9 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 	req.Set("x-app", "cli")
 	req.Set("User-Agent", "claude-cli/1.0.44 (external, cli)")
 	// interleaved-thinking 会引入 thinking signature 校验。
-	// OpenAI 兼容模式下我们无法可靠透传 thinking block/signature，因此默认禁用；
-	// 仅在 Claude /v1/messages 原生请求时开启，保持与 Claude Code CLI 行为一致。
+	// 仅在渠道显式开启 adaptive_thinking 且未被运行时禁用时开启，避免不兼容上游反复触发 400/重试。
 	beta := "claude-code-20250219,oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14"
-	if !c.GetBool("claude_disable_interleaved_thinking") && info != nil && info.RelayMode == relayconstant.RelayModeClaudeMessages {
+	if claudeAdaptiveThinkingEnabled(info) && !c.GetBool("claude_disable_interleaved_thinking") && info != nil && info.RelayMode == relayconstant.RelayModeClaudeMessages {
 		beta = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14"
 	}
 	req.Set("anthropic-beta", beta)
@@ -175,6 +174,30 @@ func isThinkingSignatureError(msg string) bool {
 func isThinkingTypeValueError(msg string) bool {
 	m := strings.ToLower(msg)
 	return strings.Contains(m, "thinking type should be enabled or disabled")
+}
+
+func claudeAdaptiveThinkingEnabled(info *relaycommon.RelayInfo) bool {
+	if info == nil || info.ChannelSetting == nil {
+		return false
+	}
+	v, ok := info.ChannelSetting["adaptive_thinking"]
+	if !ok {
+		return false
+	}
+	switch t := v.(type) {
+	case bool:
+		return t
+	case string:
+		return strings.EqualFold(strings.TrimSpace(t), "true")
+	case float64:
+		return t != 0
+	case int:
+		return t != 0
+	case int64:
+		return t != 0
+	default:
+		return false
+	}
 }
 
 func patchThinkingTypeForCompat(body []byte) ([]byte, bool) {
@@ -320,6 +343,16 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 	}
 	if info != nil {
 		bodyBytes = ensureMetadataUserID(bodyBytes, info.ApiKey)
+	}
+	if info != nil && info.RelayMode == relayconstant.RelayModeClaudeMessages && !claudeAdaptiveThinkingEnabled(info) {
+		// 渠道未开启 adaptive_thinking：前置走兼容模式，避免先触发 400 再走重试。
+		c.Set("claude_disable_interleaved_thinking", true)
+		if patched, changed := patchThinkingTypeForCompat(bodyBytes); changed {
+			bodyBytes = patched
+			if debugEnabled {
+				common.LogInfo(c, "[claude-messages][upstream_prepatch] reason=adaptive_thinking_disabled patch=thinking_type")
+			}
+		}
 	}
 
 	doOnce := func() (*http.Response, error) {

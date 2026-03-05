@@ -317,9 +317,20 @@ const EditChannel = (props) => {
     const s = getClaudeSetting();
     return s.auth_mode === 'oauth' ? 'oauth' : 'api_key';
   };
+  const getClaudeAdaptiveThinking = () => {
+    const s = getClaudeSetting();
+    return s.adaptive_thinking === true;
+  };
   const getClaudeSessionId = () => {
     const s = getClaudeSetting();
     return s.claude_oauth_session_id || '';
+  };
+  const applyClaudeAdaptiveThinking = (enabled) => {
+    setInputs((prev) => {
+      const s = safeParseJSON(prev.setting);
+      const next = { ...s, adaptive_thinking: !!enabled };
+      return { ...prev, setting: JSON.stringify(next, null, 2) };
+    });
   };
   const applyClaudeAuthMode = (mode) => {
     setInputs((prev) => {
@@ -1005,6 +1016,17 @@ const EditChannel = (props) => {
                       applyClaudeAuthMode(v);
                     }}
                   />
+                  <div style={{ marginTop: 10, display: 'flex' }}>
+                    <Space>
+                      <Checkbox
+                        checked={getClaudeAdaptiveThinking()}
+                        onChange={() => {
+                          applyClaudeAdaptiveThinking(!getClaudeAdaptiveThinking());
+                        }}
+                      />
+                      <Typography.Text>{t('自适应思考（上游支持 thinking 时勾选）')}</Typography.Text>
+                    </Space>
+                  </div>
                   {getClaudeAuthMode() === 'oauth' && (
                     <div style={{ marginTop: 10 }}>
                       <Banner
