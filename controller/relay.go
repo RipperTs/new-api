@@ -128,9 +128,10 @@ func Relay(c *gin.Context) {
 			return // 成功处理请求，直接返回
 		}
 
-		go processChannelError(requestId, group, channel.Id, channel.Type, channel.Name, originalModel, channel.GetAutoBan(), openaiErr)
+		canRetry := shouldRetry(c, openaiErr, common.RetryTimes-i)
+		go processChannelError(requestId, group, channel.Id, channel.Type, channel.Name, originalModel, channel.GetAutoBan(), openaiErr, !canRetry)
 
-		if !shouldRetry(c, openaiErr, common.RetryTimes-i) {
+		if !canRetry {
 			break
 		}
 	}
@@ -217,9 +218,10 @@ func WssRelay(c *gin.Context) {
 			return // 成功处理请求，直接返回
 		}
 
-		go processChannelError(requestId, group, channel.Id, channel.Type, channel.Name, originalModel, channel.GetAutoBan(), openaiErr)
+		canRetry := shouldRetry(c, openaiErr, common.RetryTimes-i)
+		go processChannelError(requestId, group, channel.Id, channel.Type, channel.Name, originalModel, channel.GetAutoBan(), openaiErr, !canRetry)
 
-		if !shouldRetry(c, openaiErr, common.RetryTimes-i) {
+		if !canRetry {
 			break
 		}
 	}
@@ -336,7 +338,7 @@ func shouldRetry(c *gin.Context, openaiErr *dto.OpenAIErrorWithStatusCode, retry
 	return true
 }
 
-func processChannelError(requestId string, group string, channelId int, channelType int, channelName string, originalModel string, autoBan bool, err *dto.OpenAIErrorWithStatusCode) {
+func processChannelError(requestId string, group string, channelId int, channelType int, channelName string, originalModel string, autoBan bool, err *dto.OpenAIErrorWithStatusCode, shouldNotify bool) {
 	if err == nil {
 		return
 	}
@@ -349,13 +351,15 @@ func processChannelError(requestId string, group string, channelId int, channelT
 	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
 	// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
 	common.LogError(ctx, fmt.Sprintf("relay error (channel #%d, status code: %d): %s", channelId, err.StatusCode, err.Error.Message))
-	subject := channelName + " 渠道调用异常!"
-	content := fmt.Sprintf("通道 %s 调用失败，模型 %s，状态码 %d，错误信息 %s", channelName, originalModel, err.StatusCode, err.Error.Message)
-	if sendErr := common.SendConfiguredEmailNotification(subject, content, group); sendErr != nil {
-		common.SysError(fmt.Sprintf("failed to send notification email: %s", sendErr.Error()))
-	}
-	if sendErr := common.SendConfiguredFeishuNotification(subject, content, group); sendErr != nil {
-		common.SysError(fmt.Sprintf("failed to send feishu notification: %s", sendErr.Error()))
+	if shouldNotify {
+		subject := channelName + " 渠道调用异常!"
+		content := fmt.Sprintf("通道 %s 调用失败，模型 %s，状态码 %d，错误信息 %s", channelName, originalModel, err.StatusCode, err.Error.Message)
+		if sendErr := common.SendConfiguredEmailNotification(subject, content, group); sendErr != nil {
+			common.SysError(fmt.Sprintf("failed to send notification email: %s", sendErr.Error()))
+		}
+		if sendErr := common.SendConfiguredFeishuNotification(subject, content, group); sendErr != nil {
+			common.SysError(fmt.Sprintf("failed to send feishu notification: %s", sendErr.Error()))
+		}
 	}
 
 	if service.ShouldDisableChannel(channelType, err) && autoBan {
