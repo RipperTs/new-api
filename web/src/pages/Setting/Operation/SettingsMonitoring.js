@@ -1,38 +1,72 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Button, Col, Form, Row, Spin } from '@douyinfe/semi-ui';
-import {
-  compareObjects,
-  API,
-  showError,
-  showSuccess,
-  showWarning,
-} from '../../../helpers';
+import { Button, Col, Form, Row, Select, Spin } from '@douyinfe/semi-ui';
+import { API, showError, showSuccess, showWarning } from '../../../helpers';
 import { useTranslation } from 'react-i18next';
+
+const defaultInputs = {
+  ChannelDisableThreshold: '',
+  QuotaRemindThreshold: '',
+  AutomaticDisableChannelEnabled: false,
+  AutomaticEnableChannelEnabled: false,
+  EmailNotificationEnabled: true,
+  EmailNotificationGroups: [],
+};
+
+const parseNotificationGroups = (value) => {
+  if (!value) {
+    return [];
+  }
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => String(item).trim())
+      .filter((item) => item !== '');
+  }
+  if (typeof value !== 'string') {
+    return [];
+  }
+  return value
+    .split(/[;,]/)
+    .map((item) => item.trim())
+    .filter((item) => item !== '');
+};
 
 export default function SettingsMonitoring(props) {
   const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
-  const [inputs, setInputs] = useState({
-    ChannelDisableThreshold: '',
-    QuotaRemindThreshold: '',
-    AutomaticDisableChannelEnabled: false,
-    AutomaticEnableChannelEnabled: false,
-  });
+  const [inputs, setInputs] = useState(defaultInputs);
   const refForm = useRef();
-  const [inputsRow, setInputsRow] = useState(inputs);
+  const [inputsRow, setInputsRow] = useState(defaultInputs);
+  const [groupOptions, setGroupOptions] = useState([]);
 
   function onSubmit() {
-    const updateArray = compareObjects(inputs, inputsRow);
+    const normalizedInputs = {
+      ...inputs,
+      EmailNotificationGroups: parseNotificationGroups(
+        inputs.EmailNotificationGroups,
+      ).join(','),
+    };
+    const normalizedInputsRow = {
+      ...inputsRow,
+      EmailNotificationGroups: parseNotificationGroups(
+        inputsRow.EmailNotificationGroups,
+      ).join(','),
+    };
+    const updateArray = Object.keys(normalizedInputs).reduce((result, key) => {
+      if (normalizedInputs[key] !== normalizedInputsRow[key]) {
+        result.push(key);
+      }
+      return result;
+    }, []);
     if (!updateArray.length) return showWarning(t('你似乎并没有修改什么'));
-    const requestQueue = updateArray.map((item) => {
+    const requestQueue = updateArray.map((key) => {
       let value = '';
-      if (typeof inputs[item.key] === 'boolean') {
-        value = String(inputs[item.key]);
+      if (typeof normalizedInputs[key] === 'boolean') {
+        value = String(normalizedInputs[key]);
       } else {
-        value = inputs[item.key];
+        value = normalizedInputs[key];
       }
       return API.put('/api/option/', {
-        key: item.key,
+        key,
         value,
       });
     });
@@ -42,7 +76,8 @@ export default function SettingsMonitoring(props) {
         if (requestQueue.length === 1) {
           if (res.includes(undefined)) return;
         } else if (requestQueue.length > 1) {
-          if (res.includes(undefined)) return showError(t('部分保存失败，请重试'));
+          if (res.includes(undefined))
+            return showError(t('部分保存失败，请重试'));
         }
         showSuccess(t('保存成功'));
         props.refresh();
@@ -55,18 +90,39 @@ export default function SettingsMonitoring(props) {
       });
   }
 
+  const fetchGroups = async () => {
+    try {
+      const res = await API.get('/api/group/');
+      setGroupOptions(
+        res.data.data.map((group) => ({
+          label: group,
+          value: group,
+        })),
+      );
+    } catch (error) {
+      showError(error.message);
+    }
+  };
+
   useEffect(() => {
-    const currentInputs = {};
-    for (let key in props.options) {
-      if (Object.keys(inputs).includes(key)) {
+    const currentInputs = { ...defaultInputs };
+    Object.keys(defaultInputs).forEach((key) => {
+      if (props.options[key] !== undefined) {
         currentInputs[key] = props.options[key];
       }
-    }
+    });
+    currentInputs.EmailNotificationGroups = parseNotificationGroups(
+      currentInputs.EmailNotificationGroups,
+    );
     setInputs(currentInputs);
     setInputsRow(structuredClone(currentInputs));
     refForm.current.setValues(currentInputs);
   }, [props.options]);
-  
+
+  useEffect(() => {
+    fetchGroups().then();
+  }, []);
+
   return (
     <>
       <Spin spinning={loading}>
@@ -83,7 +139,9 @@ export default function SettingsMonitoring(props) {
                   step={1}
                   min={0}
                   suffix={t('秒')}
-                  extraText={t('当运行通道全部测试时，超过此时间将自动禁用通道')}
+                  extraText={t(
+                    '当运行通道全部测试时，超过此时间将自动禁用通道',
+                  )}
                   placeholder={''}
                   field={'ChannelDisableThreshold'}
                   onChange={(value) =>
@@ -142,6 +200,54 @@ export default function SettingsMonitoring(props) {
                     })
                   }
                 />
+              </Col>
+              <Col span={8}>
+                <Form.Switch
+                  field={'EmailNotificationEnabled'}
+                  label={t('启用邮箱异常通知')}
+                  size='default'
+                  checkedText='｜'
+                  uncheckedText='〇'
+                  onChange={(value) =>
+                    setInputs({
+                      ...inputs,
+                      EmailNotificationEnabled: value,
+                    })
+                  }
+                />
+              </Col>
+            </Row>
+            <Row gutter={16}>
+              <Col span={16}>
+                <div
+                  style={{ marginBottom: 8, color: 'var(--semi-color-text-2)' }}
+                >
+                  {t('告警分组')}
+                </div>
+                <Select
+                  multiple
+                  search
+                  placeholder={t('留空表示全部分组')}
+                  optionList={groupOptions}
+                  value={inputs.EmailNotificationGroups}
+                  onChange={(value) =>
+                    setInputs({
+                      ...inputs,
+                      EmailNotificationGroups: value || [],
+                    })
+                  }
+                />
+                <div
+                  style={{
+                    marginTop: 8,
+                    color: 'var(--semi-color-text-2)',
+                    fontSize: 12,
+                  }}
+                >
+                  {t(
+                    '仅当这些分组发生渠道异常时发送邮箱告警，留空表示全部分组',
+                  )}
+                </div>
               </Col>
             </Row>
             <Row>

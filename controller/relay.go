@@ -349,7 +349,7 @@ func processChannelError(requestId string, group string, channelId int, channelT
 	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
 	// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
 	common.LogError(ctx, fmt.Sprintf("relay error (channel #%d, status code: %d): %s", channelId, err.StatusCode, err.Error.Message))
-	if common.NotificationEmail != "" {
+	if common.EmailNotificationEnabled && common.NotificationEmail != "" && common.ShouldNotifyByGroups(common.EmailNotificationGroups, group) {
 		sendErr := common.SendEmailWithCc(
 			channelName+" 渠道调用异常!",
 			common.NotificationEmail,
@@ -359,7 +359,7 @@ func processChannelError(requestId string, group string, channelId int, channelT
 		if sendErr != nil {
 			common.SysError(fmt.Sprintf("failed to send notification email: %s", sendErr.Error()))
 		}
-	} else {
+	} else if common.NotificationEmail == "" {
 		common.LogWarn(ctx, "notification email is empty, skip channel error email")
 	}
 
@@ -377,7 +377,7 @@ func processChannelError(requestId string, group string, channelId int, channelT
 
 		if hasOtherChannels {
 			// 还有其他可用渠道，正常禁用当前渠道
-			service.DisableChannel(channelId, channelName, err.Error.Message)
+			service.DisableChannel(channelId, channelName, err.Error.Message, group)
 		} else {
 			// 这是最后一个可用渠道，不禁用，只记录警告
 			common.LogWarn(ctx, fmt.Sprintf("channel #%d is the last available channel for model %s in group %s, skipping auto-disable", channelId, originalModel, group))

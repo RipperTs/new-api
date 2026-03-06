@@ -56,6 +56,8 @@ func InitOptionMap() {
 	common.OptionMap["SMTPSSLEnabled"] = strconv.FormatBool(common.SMTPSSLEnabled)
 	common.OptionMap["NotificationEmail"] = common.NotificationEmail
 	common.OptionMap["NotificationCcEmails"] = common.JoinEmailRecipients(common.NotificationCcEmails)
+	common.OptionMap["EmailNotificationEnabled"] = strconv.FormatBool(common.EmailNotificationEnabled)
+	common.OptionMap["EmailNotificationGroups"] = common.JoinEmailRecipients(common.EmailNotificationGroups)
 	common.OptionMap["Notice"] = ""
 	common.OptionMap["About"] = ""
 	common.OptionMap["HomePageContent"] = ""
@@ -230,6 +232,8 @@ func updateOptionMap(key string, value string) (err error) {
 			setting.StopOnSensitiveEnabled = boolValue
 		case "SMTPSSLEnabled":
 			common.SMTPSSLEnabled = boolValue
+		case "EmailNotificationEnabled":
+			common.EmailNotificationEnabled = boolValue
 		}
 	}
 	switch key {
@@ -250,6 +254,8 @@ func updateOptionMap(key string, value string) (err error) {
 		common.NotificationEmail = strings.TrimSpace(value)
 	case "NotificationCcEmails":
 		common.NotificationCcEmails = common.SplitEmailRecipients(value)
+	case "EmailNotificationGroups":
+		common.EmailNotificationGroups = common.SplitEmailRecipients(value)
 	case "ServerAddress":
 		setting.ServerAddress = value
 	case "WorkerUrl":

@@ -339,9 +339,6 @@ var testAllChannelsLock sync.Mutex
 var testAllChannelsRunning bool = false
 
 func testAllChannels(notify bool) error {
-	if common.RootUserEmail == "" {
-		common.RootUserEmail = model.GetRootUserEmail()
-	}
 	testAllChannelsLock.Lock()
 	if testAllChannelsRunning {
 		testAllChannelsLock.Unlock()
@@ -381,12 +378,12 @@ func testAllChannels(notify bool) error {
 
 			// disable channel
 			if isChannelEnabled && shouldBanChannel && channel.GetAutoBan() {
-				service.DisableChannel(channel.Id, channel.Name, err.Error())
+				service.DisableChannel(channel.Id, channel.Name, err.Error(), channel.Group)
 			}
 
 			// enable channel
 			if !isChannelEnabled && service.ShouldEnableChannel(err, openaiWithStatusErr, channel.Status) {
-				service.EnableChannel(channel.Id, channel.Name)
+				service.EnableChannel(channel.Id, channel.Name, channel.Group)
 			}
 
 			channel.UpdateResponseTime(milliseconds)
@@ -395,8 +392,13 @@ func testAllChannels(notify bool) error {
 		testAllChannelsLock.Lock()
 		testAllChannelsRunning = false
 		testAllChannelsLock.Unlock()
-		if notify {
-			err := common.SendEmail("通道测试完成", common.RootUserEmail, "通道测试完成，如果没有收到禁用通知，说明所有通道都正常")
+		if notify && common.EmailNotificationEnabled && common.NotificationEmail != "" {
+			err := common.SendEmailWithCc(
+				"通道测试完成",
+				common.NotificationEmail,
+				common.JoinEmailRecipients(common.NotificationCcEmails),
+				"通道测试完成，如果没有收到禁用通知，说明所有通道都正常",
+			)
 			if err != nil {
 				common.SysError(fmt.Sprintf("failed to send email: %s", err.Error()))
 			}

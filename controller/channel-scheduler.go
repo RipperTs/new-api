@@ -61,7 +61,7 @@ func checkDisabledChannels() error {
 
 			// 如果测试成功且满足启用条件，则启用渠道
 			if service.ShouldEnableChannel(err, openaiWithStatusErr, channel.Status) {
-				service.EnableChannel(channel.Id, channel.Name)
+				service.EnableChannel(channel.Id, channel.Name, channel.Group)
 				enabledCount++
 				common.SysLog(fmt.Sprintf("渠道 #%d (%s) 已自动启用", channel.Id, channel.Name))
 			} else if err != nil {

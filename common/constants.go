@@ -76,6 +76,8 @@ var SMTPFrom = ""
 var SMTPToken = ""
 var NotificationEmail = strings.TrimSpace(os.Getenv("NOTIFICATION_EMAIL"))
 var NotificationCcEmails = SplitEmailRecipients(os.Getenv("NOTIFICATION_CC_EMAILS"))
+var EmailNotificationEnabled = true
+var EmailNotificationGroups = []string{}
 
 var GitHubClientId = ""
 var GitHubClientSecret = ""

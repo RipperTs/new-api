@@ -10,18 +10,39 @@ import (
 )
 
 // disable & notify
-func DisableChannel(channelId int, channelName string, reason string) {
+func DisableChannel(channelId int, channelName string, reason string, groupExpression string) {
 	model.UpdateChannelStatusById(channelId, common.ChannelStatusAutoDisabled, reason)
 	subject := fmt.Sprintf("通道「%s」（#%d）已被禁用", channelName, channelId)
 	content := fmt.Sprintf("通道「%s」（#%d）已被禁用，原因：%s", channelName, channelId, reason)
-	notifyRootUser(subject, content)
+	sendChannelStatusNotification(subject, content, groupExpression)
 }
 
-func EnableChannel(channelId int, channelName string) {
+func EnableChannel(channelId int, channelName string, groupExpression string) {
 	model.UpdateChannelStatusById(channelId, common.ChannelStatusEnabled, "")
 	subject := fmt.Sprintf("通道「%s」（#%d）已被启用", channelName, channelId)
 	content := fmt.Sprintf("通道「%s」（#%d）已被启用", channelName, channelId)
-	notifyRootUser(subject, content)
+	sendChannelStatusNotification(subject, content, groupExpression)
+}
+
+func sendChannelStatusNotification(subject string, content string, groupExpression string) {
+	if !common.EmailNotificationEnabled {
+		return
+	}
+	if common.NotificationEmail == "" {
+		return
+	}
+	if !common.ShouldNotifyByGroupExpression(common.EmailNotificationGroups, groupExpression) {
+		return
+	}
+	err := common.SendEmailWithCc(
+		subject,
+		common.NotificationEmail,
+		common.JoinEmailRecipients(common.NotificationCcEmails),
+		content,
+	)
+	if err != nil {
+		common.SysError(fmt.Sprintf("failed to send email: %s", err.Error()))
+	}
 }
 
 // ShouldDisableChannel 根据错误信息判断是否应自动禁用通道
