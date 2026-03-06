@@ -39,7 +39,7 @@ func relayHandler(c *gin.Context, relayMode int) *dto.OpenAIErrorWithStatusCode 
 	case relayconstant.RelayModeCodexCLI:
 		err = relay.CodexCLIHelper(c)
 	case relayconstant.RelayModeClaudeMessages:
-		err = relay.ClaudeCodeMessagesHelper(c)
+		err = relay.ClaudeMessagesHelper(c)
 	default:
 		err = relay.TextHelper(c)
 	}
@@ -129,7 +129,7 @@ func Relay(c *gin.Context) {
 		}
 
 		canRetry := shouldRetry(c, openaiErr, common.RetryTimes-i)
-		go processChannelError(requestId, group, channel.Id, channel.Type, channel.Name, originalModel, channel.GetAutoBan(), openaiErr, !canRetry)
+		go processChannelError(requestId, group, channel.Id, channel.Type, channel.Name, originalModel, relayMode, channel.GetAutoBan(), openaiErr, !canRetry)
 
 		if !canRetry {
 			break
@@ -219,7 +219,7 @@ func WssRelay(c *gin.Context) {
 		}
 
 		canRetry := shouldRetry(c, openaiErr, common.RetryTimes-i)
-		go processChannelError(requestId, group, channel.Id, channel.Type, channel.Name, originalModel, channel.GetAutoBan(), openaiErr, !canRetry)
+		go processChannelError(requestId, group, channel.Id, channel.Type, channel.Name, originalModel, relayMode, channel.GetAutoBan(), openaiErr, !canRetry)
 
 		if !canRetry {
 			break
@@ -280,8 +280,8 @@ func getChannel(c *gin.Context, group, originalModel string, retryCount int) (*m
 	if relayMode == relayconstant.RelayModeResponses {
 		channel, err = model.GetRandomSatisfiedChannelByTypes(group, originalModel, retryCount, []int{common.ChannelTypeOpenAI})
 	} else if relayMode == relayconstant.RelayModeClaudeMessages {
-		// /v1/messages 仅支持 Claude Code 渠道，重试时只在同类型渠道内选择。
-		channel, err = model.GetRandomSatisfiedChannelByTypes(group, originalModel, retryCount, []int{common.ChannelTypeClaudeCode})
+		// /v1/messages 兼容模式仅在 Claude Code/OpenRouter 渠道内重试，避免误选不兼容渠道。
+		channel, err = model.GetRandomSatisfiedChannelByTypes(group, originalModel, retryCount, []int{common.ChannelTypeClaudeCode, common.ChannelTypeOpenRouter})
 	} else if relayMode == relayconstant.RelayModeCodexCLI {
 		// Codex CLI 只支持 Codex 渠道：重试时也只从 Codex 渠道中选择，避免选到不兼容渠道导致本地错误而中断重试。
 		channel, err = model.GetRandomSatisfiedChannelByTypes(group, originalModel, retryCount, []int{common.ChannelTypeCodex})
@@ -338,7 +338,7 @@ func shouldRetry(c *gin.Context, openaiErr *dto.OpenAIErrorWithStatusCode, retry
 	return true
 }
 
-func processChannelError(requestId string, group string, channelId int, channelType int, channelName string, originalModel string, autoBan bool, err *dto.OpenAIErrorWithStatusCode, shouldNotify bool) {
+func processChannelError(requestId string, group string, channelId int, channelType int, channelName string, originalModel string, relayMode int, autoBan bool, err *dto.OpenAIErrorWithStatusCode, shouldNotify bool) {
 	if err == nil {
 		return
 	}
@@ -369,9 +369,10 @@ func processChannelError(requestId string, group string, channelId int, channelT
 			// Codex CLI 场景：只认为同类型（Codex）渠道可替代，避免误把“最后一个 Codex 渠道”禁用掉。
 			hasOtherChannels = model.HasOtherAvailableChannelsByTypes(group, originalModel, channelId, []int{common.ChannelTypeCodex})
 		}
-		if channelType == common.ChannelTypeClaudeCode {
-			// Claude Code：/v1/messages 仅支持同类型渠道，避免误把“最后一个 Claude Code 渠道”禁用掉。
-			hasOtherChannels = model.HasOtherAvailableChannelsByTypes(group, originalModel, channelId, []int{common.ChannelTypeClaudeCode})
+		if relayMode == relayconstant.RelayModeClaudeMessages &&
+			(channelType == common.ChannelTypeClaudeCode || channelType == common.ChannelTypeOpenRouter) {
+			// Claude Messages 兼容模式：仅 Claude Code / OpenRouter 视为可替代，避免误禁最后一个兼容渠道。
+			hasOtherChannels = model.HasOtherAvailableChannelsByTypes(group, originalModel, channelId, []int{common.ChannelTypeClaudeCode, common.ChannelTypeOpenRouter})
 		}
 
 		if hasOtherChannels {

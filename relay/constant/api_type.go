@@ -80,6 +80,8 @@ func ChannelType2APIType(channelType int) (int, bool) {
 		apiType = APITypeMistral
 	case common.ChannelTypeDeepSeek:
 		apiType = APITypeDeepSeek
+	case common.ChannelTypeOpenRouter:
+		apiType = APITypeOpenAI
 	case common.ChannelTypeClaudeCode:
 		apiType = APITypeClaudeCode
 	case common.ChannelTypeCodex:

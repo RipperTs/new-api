@@ -102,6 +102,9 @@ func Distribute() func(c *gin.Context) {
 					if err != nil {
 						channel, err = model.GetRandomSatisfiedChannelByTypes(userGroup, modelRequest.Model, 0, []int{common.ChannelTypeCodex})
 					}
+				} else if strings.HasPrefix(c.Request.URL.Path, "/v1/messages") {
+					// Claude Messages 兼容入口：仅在 Claude Code / OpenRouter 渠道中选路，避免命中不兼容渠道。
+					channel, err = model.GetRandomSatisfiedChannelByTypes(userGroup, modelRequest.Model, 0, []int{common.ChannelTypeClaudeCode, common.ChannelTypeOpenRouter})
 				} else {
 					channel, err = model.GetRandomSatisfiedChannel(userGroup, modelRequest.Model, 0)
 				}

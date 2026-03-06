@@ -1,5 +1,6 @@
 export const CHANNEL_OPTIONS = [
   { key: 1, text: 'OpenAI', value: 1, color: 'green', label: 'OpenAI' },
+  { key: 20, text: 'OpenRouter', value: 20, color: 'orange', label: 'OpenRouter' },
   {
     key: 2,
     text: 'Midjourney Proxy',
