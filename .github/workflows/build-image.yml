@@ -3,33 +3,11 @@ name: Build and Push Docker Image to Aliyun
 # 触发条件：只有推送到主分支时触发
 on:
   push:
-    branches:
-      - jl
-    paths-ignore:
-      - '*.md'
-      - '**/*.md'
-      - '*.txt'
-      - '**/*.txt'
-      - '*.jpg'
-      - '*.jpeg'
-      - '*.png'
-      - '*.gif'
-      - '*.svg'
-      - '*.ico'
-      - '**/*.jpg'
-      - '**/*.jpeg'
-      - '**/*.png'
-      - '**/*.gif'
-      - '**/*.svg'
-      - '**/*.ico'
-      - '.gitignore'
-      - '.env.example'
-      - '.vscode/**'
-      - '.idea/**'
-      - 'logs/**'
-      - '*.log'
-      - '**/*.log'
-      - 'LICENSE'
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
 
 jobs:
   build-and-push:
