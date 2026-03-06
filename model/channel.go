@@ -321,47 +321,69 @@ func (channel *Channel) Delete() error {
 
 var channelStatusLock sync.Mutex
 
-func UpdateChannelStatusById(id int, status int, reason string) {
+// UpdateChannelStatusById 更新渠道状态，返回是否发生了状态变化
+func UpdateChannelStatusById(id int, status int, reason string) bool {
+	channelStatusLock.Lock()
+	defer channelStatusLock.Unlock()
+
+	var channel *Channel
+
 	if common.MemoryCacheEnabled {
-		channelStatusLock.Lock()
 		channelCache, _ := CacheGetChannel(id)
 		// 如果缓存渠道存在，且状态已是目标状态，直接返回
 		if channelCache != nil && channelCache.Status == status {
-			channelStatusLock.Unlock()
-			return
+			return false
 		}
 		// 如果缓存渠道不存在(说明已经被禁用)，且要设置的状态不为启用，直接返回
 		if channelCache == nil && status != common.ChannelStatusEnabled {
-			channelStatusLock.Unlock()
-			return
+			return false
 		}
-		CacheUpdateChannelStatus(id, status)
-		channelStatusLock.Unlock()
+		channel = channelCache
 	}
+
+	// 当缓存不存在或关闭缓存时，以数据库状态作为最终幂等判断
+	if channel == nil {
+		dbChannel, err := GetChannelById(id, true)
+		if err == nil {
+			channel = dbChannel
+		}
+	}
+	if channel != nil && channel.Status == status {
+		return false
+	}
+
+	if common.MemoryCacheEnabled {
+		CacheUpdateChannelStatus(id, status)
+	}
+
 	err := UpdateAbilityStatus(id, status == common.ChannelStatusEnabled)
 	if err != nil {
 		common.SysError("failed to update ability status: " + err.Error())
 	}
-	channel, err := GetChannelById(id, true)
-	if err != nil {
+
+	if channel == nil {
 		// find channel by id error, directly update status
-		err = DB.Model(&Channel{}).Where("id = ?", id).Update("status", status).Error
-		if err != nil {
-			common.SysError("failed to update channel status: " + err.Error())
+		result := DB.Model(&Channel{}).Where("id = ?", id).Update("status", status)
+		if result.Error != nil {
+			common.SysError("failed to update channel status: " + result.Error.Error())
+			return false
 		}
-	} else {
-		// find channel by id success, update status and other info
-		info := channel.GetOtherInfo()
-		info["status_reason"] = reason
-		info["status_time"] = common.GetTimestamp()
-		channel.SetOtherInfo(info)
-		channel.Status = status
-		err = channel.Save()
-		if err != nil {
-			common.SysError("failed to update channel status: " + err.Error())
-		}
+		return result.RowsAffected > 0
 	}
 
+	// find channel by id success, update status and other info
+	info := channel.GetOtherInfo()
+	info["status_reason"] = reason
+	info["status_time"] = common.GetTimestamp()
+	channel.SetOtherInfo(info)
+	channel.Status = status
+	err = channel.Save()
+	if err != nil {
+		common.SysError("failed to update channel status: " + err.Error())
+		return false
+	}
+
+	return true
 }
 
 func EnableChannelByTag(tag string) error {

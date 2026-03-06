@@ -11,16 +11,22 @@ import (
 
 // disable & notify
 func DisableChannel(channelId int, channelName string, reason string, groupExpression string) {
-	model.UpdateChannelStatusById(channelId, common.ChannelStatusAutoDisabled, reason)
+	updated := model.UpdateChannelStatusById(channelId, common.ChannelStatusAutoDisabled, reason)
+	if !updated {
+		return
+	}
 	subject := fmt.Sprintf("通道「%s」（#%d）已被禁用", channelName, channelId)
 	content := fmt.Sprintf("通道「%s」（#%d）已被禁用，原因：%s", channelName, channelId, reason)
 	sendChannelStatusNotification(subject, content, groupExpression)
 }
 
 func EnableChannel(channelId int, channelName string, groupExpression string) {
-	model.UpdateChannelStatusById(channelId, common.ChannelStatusEnabled, "")
+	updated := model.UpdateChannelStatusById(channelId, common.ChannelStatusEnabled, "")
+	if !updated {
+		return
+	}
 	subject := fmt.Sprintf("通道「%s」（#%d）已被启用", channelName, channelId)
-	content := fmt.Sprintf("通道「%s」（#%d）已被启用", channelName, channelId)
+	content := fmt.Sprintf("通道「%s」（#%d）已恢复可用并重新加入调度", channelName, channelId)
 	sendChannelStatusNotification(subject, content, groupExpression)
 }
 
