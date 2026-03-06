@@ -1,6 +1,6 @@
 name: Build and Push Docker Image to Aliyun
 
-# 触发条件：只有推送到主分支时触发
+# 触发条件：仅在推送版本标签时触发
 on:
   push:
     tags:
@@ -42,12 +42,11 @@ jobs:
         with:
           images: registry.cn-hangzhou.aliyuncs.com/ripper/new-api  # 替换为你的命名空间和仓库名
           tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=sha,prefix={{branch}}-
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=tag
+            type=raw,value=latest
 
       - name: Build and push Docker image
+        id: build-and-push
         uses: docker/build-push-action@v5
         with:
           context: .
