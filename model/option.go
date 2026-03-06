@@ -56,8 +56,11 @@ func InitOptionMap() {
 	common.OptionMap["SMTPSSLEnabled"] = strconv.FormatBool(common.SMTPSSLEnabled)
 	common.OptionMap["NotificationEmail"] = common.NotificationEmail
 	common.OptionMap["NotificationCcEmails"] = common.JoinEmailRecipients(common.NotificationCcEmails)
+	common.OptionMap["FeishuWebhookURL"] = common.FeishuWebhookURL
 	common.OptionMap["EmailNotificationEnabled"] = strconv.FormatBool(common.EmailNotificationEnabled)
 	common.OptionMap["EmailNotificationGroups"] = common.JoinEmailRecipients(common.EmailNotificationGroups)
+	common.OptionMap["FeishuNotificationEnabled"] = strconv.FormatBool(common.FeishuNotificationEnabled)
+	common.OptionMap["FeishuNotificationGroups"] = common.JoinEmailRecipients(common.FeishuNotificationGroups)
 	common.OptionMap["Notice"] = ""
 	common.OptionMap["About"] = ""
 	common.OptionMap["HomePageContent"] = ""
@@ -234,6 +237,8 @@ func updateOptionMap(key string, value string) (err error) {
 			common.SMTPSSLEnabled = boolValue
 		case "EmailNotificationEnabled":
 			common.EmailNotificationEnabled = boolValue
+		case "FeishuNotificationEnabled":
+			common.FeishuNotificationEnabled = boolValue
 		}
 	}
 	switch key {
@@ -254,8 +259,12 @@ func updateOptionMap(key string, value string) (err error) {
 		common.NotificationEmail = strings.TrimSpace(value)
 	case "NotificationCcEmails":
 		common.NotificationCcEmails = common.SplitEmailRecipients(value)
+	case "FeishuWebhookURL":
+		common.FeishuWebhookURL = strings.TrimSpace(value)
 	case "EmailNotificationGroups":
-		common.EmailNotificationGroups = common.SplitEmailRecipients(value)
+		common.EmailNotificationGroups = common.SplitNotificationGroups(value)
+	case "FeishuNotificationGroups":
+		common.FeishuNotificationGroups = common.SplitNotificationGroups(value)
 	case "ServerAddress":
 		setting.ServerAddress = value
 	case "WorkerUrl":

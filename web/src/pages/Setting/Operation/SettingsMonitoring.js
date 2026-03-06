@@ -10,6 +10,8 @@ const defaultInputs = {
   AutomaticEnableChannelEnabled: false,
   EmailNotificationEnabled: true,
   EmailNotificationGroups: [],
+  FeishuNotificationEnabled: false,
+  FeishuNotificationGroups: [],
 };
 
 const parseNotificationGroups = (value) => {
@@ -44,11 +46,17 @@ export default function SettingsMonitoring(props) {
       EmailNotificationGroups: parseNotificationGroups(
         inputs.EmailNotificationGroups,
       ).join(','),
+      FeishuNotificationGroups: parseNotificationGroups(
+        inputs.FeishuNotificationGroups,
+      ).join(','),
     };
     const normalizedInputsRow = {
       ...inputsRow,
       EmailNotificationGroups: parseNotificationGroups(
         inputsRow.EmailNotificationGroups,
+      ).join(','),
+      FeishuNotificationGroups: parseNotificationGroups(
+        inputsRow.FeishuNotificationGroups,
       ).join(','),
     };
     const updateArray = Object.keys(normalizedInputs).reduce((result, key) => {
@@ -113,6 +121,9 @@ export default function SettingsMonitoring(props) {
     });
     currentInputs.EmailNotificationGroups = parseNotificationGroups(
       currentInputs.EmailNotificationGroups,
+    );
+    currentInputs.FeishuNotificationGroups = parseNotificationGroups(
+      currentInputs.FeishuNotificationGroups,
     );
     setInputs(currentInputs);
     setInputsRow(structuredClone(currentInputs));
@@ -216,6 +227,21 @@ export default function SettingsMonitoring(props) {
                   }
                 />
               </Col>
+              <Col span={8}>
+                <Form.Switch
+                  field={'FeishuNotificationEnabled'}
+                  label={t('启用飞书异常通知')}
+                  size='default'
+                  checkedText='｜'
+                  uncheckedText='〇'
+                  onChange={(value) =>
+                    setInputs({
+                      ...inputs,
+                      FeishuNotificationEnabled: value,
+                    })
+                  }
+                />
+              </Col>
             </Row>
             <Row gutter={16}>
               <Col span={16}>
@@ -246,6 +272,39 @@ export default function SettingsMonitoring(props) {
                 >
                   {t(
                     '仅当这些分组发生渠道异常时发送邮箱告警，留空表示全部分组',
+                  )}
+                </div>
+              </Col>
+            </Row>
+            <Row gutter={16}>
+              <Col span={16}>
+                <div
+                  style={{ marginBottom: 8, color: 'var(--semi-color-text-2)' }}
+                >
+                  {t('飞书告警分组')}
+                </div>
+                <Select
+                  multiple
+                  search
+                  placeholder={t('留空表示全部分组')}
+                  optionList={groupOptions}
+                  value={inputs.FeishuNotificationGroups}
+                  onChange={(value) =>
+                    setInputs({
+                      ...inputs,
+                      FeishuNotificationGroups: value || [],
+                    })
+                  }
+                />
+                <div
+                  style={{
+                    marginTop: 8,
+                    color: 'var(--semi-color-text-2)',
+                    fontSize: 12,
+                  }}
+                >
+                  {t(
+                    '仅当这些分组发生渠道异常时发送飞书告警，留空表示全部分组',
                   )}
                 </div>
               </Col>

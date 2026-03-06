@@ -349,18 +349,13 @@ func processChannelError(requestId string, group string, channelId int, channelT
 	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
 	// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
 	common.LogError(ctx, fmt.Sprintf("relay error (channel #%d, status code: %d): %s", channelId, err.StatusCode, err.Error.Message))
-	if common.EmailNotificationEnabled && common.NotificationEmail != "" && common.ShouldNotifyByGroups(common.EmailNotificationGroups, group) {
-		sendErr := common.SendEmailWithCc(
-			channelName+" 渠道调用异常!",
-			common.NotificationEmail,
-			common.JoinEmailRecipients(common.NotificationCcEmails),
-			fmt.Sprintf("通道 %s 调用失败，模型 %s，状态码 %d，错误信息 %s", channelName, originalModel, err.StatusCode, err.Error.Message),
-		)
-		if sendErr != nil {
-			common.SysError(fmt.Sprintf("failed to send notification email: %s", sendErr.Error()))
-		}
-	} else if common.NotificationEmail == "" {
-		common.LogWarn(ctx, "notification email is empty, skip channel error email")
+	subject := channelName + " 渠道调用异常!"
+	content := fmt.Sprintf("通道 %s 调用失败，模型 %s，状态码 %d，错误信息 %s", channelName, originalModel, err.StatusCode, err.Error.Message)
+	if sendErr := common.SendConfiguredEmailNotification(subject, content, group); sendErr != nil {
+		common.SysError(fmt.Sprintf("failed to send notification email: %s", sendErr.Error()))
+	}
+	if sendErr := common.SendConfiguredFeishuNotification(subject, content, group); sendErr != nil {
+		common.SysError(fmt.Sprintf("failed to send feishu notification: %s", sendErr.Error()))
 	}
 
 	if service.ShouldDisableChannel(channelType, err) && autoBan {

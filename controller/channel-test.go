@@ -392,15 +392,25 @@ func testAllChannels(notify bool) error {
 		testAllChannelsLock.Lock()
 		testAllChannelsRunning = false
 		testAllChannelsLock.Unlock()
-		if notify && common.EmailNotificationEnabled && common.NotificationEmail != "" {
-			err := common.SendEmailWithCc(
-				"通道测试完成",
-				common.NotificationEmail,
-				common.JoinEmailRecipients(common.NotificationCcEmails),
-				"通道测试完成，如果没有收到禁用通知，说明所有通道都正常",
-			)
-			if err != nil {
-				common.SysError(fmt.Sprintf("failed to send email: %s", err.Error()))
+		if notify {
+			subject := "通道测试完成"
+			content := "通道测试完成，如果没有收到禁用通知，说明所有通道都正常"
+			if common.EmailNotificationEnabled && common.NotificationEmail != "" {
+				err := common.SendEmailWithCc(
+					subject,
+					common.NotificationEmail,
+					common.JoinEmailRecipients(common.NotificationCcEmails),
+					content,
+				)
+				if err != nil {
+					common.SysError(fmt.Sprintf("failed to send email: %s", err.Error()))
+				}
+			}
+			if common.FeishuNotificationEnabled && common.FeishuWebhookURL != "" {
+				err := common.SendFeishuWebhook(common.FeishuWebhookURL, subject, content)
+				if err != nil {
+					common.SysError(fmt.Sprintf("failed to send feishu notification: %s", err.Error()))
+				}
 			}
 		}
 	})

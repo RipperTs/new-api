@@ -113,6 +113,15 @@ func UpdateOption(c *gin.Context) {
 				return
 			}
 		}
+	case "FeishuWebhookURL":
+		err = common.Validate.Var(strings.TrimSpace(option.Value), "omitempty,url")
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "飞书 Webhook 地址格式不正确",
+			})
+			return
+		}
 	}
 	err = model.UpdateOption(option.Key, option.Value)
 	if err != nil {
@@ -132,6 +141,10 @@ func UpdateOption(c *gin.Context) {
 type NotificationMailRequest struct {
 	NotificationEmail    string `json:"notification_email"`
 	NotificationCcEmails string `json:"notification_cc_emails"`
+}
+
+type NotificationFeishuRequest struct {
+	FeishuWebhookURL string `json:"feishu_webhook_url"`
 }
 
 func SendNotificationMail(c *gin.Context) {
@@ -168,6 +181,43 @@ func SendNotificationMail(c *gin.Context) {
 		"<p>送达时间：" + time.Now().Format("2006-01-02 15:04:05") + "</p>" +
 		"<p>如您收到此邮件，说明通知邮箱配置已经生效。</p>"
 	err = common.SendEmailWithCcNoCache(subject, req.NotificationEmail, req.NotificationCcEmails, content)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+	})
+}
+
+func SendNotificationFeishu(c *gin.Context) {
+	var req NotificationFeishuRequest
+	err := json.NewDecoder(c.Request.Body).Decode(&req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "无效的参数",
+		})
+		return
+	}
+	req.FeishuWebhookURL = strings.TrimSpace(req.FeishuWebhookURL)
+	if err = common.Validate.Var(req.FeishuWebhookURL, "required,url"); err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "请填写正确的飞书 Webhook 地址",
+		})
+		return
+	}
+
+	title := common.SystemName + "通知已送达"
+	content := "当前系统的异常通知链路已可正常投递。\n" +
+		"系统名称：" + common.SystemName + "\n" +
+		"送达时间：" + time.Now().Format("2006-01-02 15:04:05")
+	err = common.SendFeishuWebhook(req.FeishuWebhookURL, title, content)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,

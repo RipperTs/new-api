@@ -25,23 +25,11 @@ func EnableChannel(channelId int, channelName string, groupExpression string) {
 }
 
 func sendChannelStatusNotification(subject string, content string, groupExpression string) {
-	if !common.EmailNotificationEnabled {
-		return
-	}
-	if common.NotificationEmail == "" {
-		return
-	}
-	if !common.ShouldNotifyByGroupExpression(common.EmailNotificationGroups, groupExpression) {
-		return
-	}
-	err := common.SendEmailWithCc(
-		subject,
-		common.NotificationEmail,
-		common.JoinEmailRecipients(common.NotificationCcEmails),
-		content,
-	)
-	if err != nil {
+	if err := common.SendConfiguredEmailNotification(subject, content, groupExpression); err != nil {
 		common.SysError(fmt.Sprintf("failed to send email: %s", err.Error()))
+	}
+	if err := common.SendConfiguredFeishuNotification(subject, content, groupExpression); err != nil {
+		common.SysError(fmt.Sprintf("failed to send feishu notification: %s", err.Error()))
 	}
 }
 

@@ -34,6 +34,7 @@ const SystemSetting = () => {
     SMTPToken: '',
     NotificationEmail: '',
     NotificationCcEmails: '',
+    FeishuWebhookURL: '',
     ServerAddress: '',
     WorkerUrl: '',
     WorkerValidKey: '',
@@ -163,6 +164,7 @@ const SystemSetting = () => {
       name === 'WorkerValidKey' ||
       name === 'NotificationEmail' ||
       name === 'NotificationCcEmails' ||
+      name === 'FeishuWebhookURL' ||
       name === 'EpayId' ||
       name === 'EpayKey' ||
       name === 'Price' ||
@@ -254,6 +256,9 @@ const SystemSetting = () => {
     if (originInputs['NotificationCcEmails'] !== inputs.NotificationCcEmails) {
       await updateOption('NotificationCcEmails', inputs.NotificationCcEmails);
     }
+    if (originInputs['FeishuWebhookURL'] !== inputs.FeishuWebhookURL) {
+      await updateOption('FeishuWebhookURL', inputs.FeishuWebhookURL);
+    }
   };
 
   const sendNotificationMail = async () => {
@@ -265,6 +270,20 @@ const SystemSetting = () => {
     const { success, message } = res.data;
     if (success) {
       showSuccess('通知邮件已发送，请检查相关邮箱');
+    } else {
+      showError(message);
+    }
+    setLoading(false);
+  };
+
+  const sendNotificationFeishu = async () => {
+    setLoading(true);
+    const res = await API.post('/api/option/notification/feishu', {
+      feishu_webhook_url: inputs.FeishuWebhookURL,
+    });
+    const { success, message } = res.data;
+    if (success) {
+      showSuccess('飞书通知已发送，请检查飞书群消息');
     } else {
       showError(message);
     }
@@ -703,7 +722,7 @@ const SystemSetting = () => {
             通知设置
             <Header.Subheader>用于接收请求异常等系统邮件通知</Header.Subheader>
           </Header>
-          <Form.Group widths={2}>
+          <Form.Group widths={3}>
             <Form.Input
               label='目标邮箱'
               name='NotificationEmail'
@@ -720,6 +739,14 @@ const SystemSetting = () => {
               value={inputs.NotificationCcEmails}
               placeholder='多个邮箱用英文逗号或分号分隔'
             />
+            <Form.Input
+              label='飞书 Webhook'
+              name='FeishuWebhookURL'
+              onChange={handleInputChange}
+              autoComplete='new-password'
+              value={inputs.FeishuWebhookURL}
+              placeholder='例如：https://open.feishu.cn/open-apis/bot/v2/hook/...'
+            />
           </Form.Group>
           <Form.Group>
             <Form.Button onClick={submitNotificationSettings}>
@@ -727,6 +754,9 @@ const SystemSetting = () => {
             </Form.Button>
             <Form.Button type='button' onClick={sendNotificationMail}>
               发送确认邮件
+            </Form.Button>
+            <Form.Button type='button' onClick={sendNotificationFeishu}>
+              发送飞书确认通知
             </Form.Button>
           </Form.Group>
           <Divider />
