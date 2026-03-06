@@ -16,6 +16,7 @@ import (
 	relayconstant "one-api/relay/constant"
 	"one-api/service"
 	"one-api/setting"
+	"strconv"
 	"strings"
 )
 
@@ -63,6 +64,11 @@ func OpenRouterClaudeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorW
 		return nil
 	}
 	relayInfo.IsStream = claudeReq.Stream
+
+	var bodyMap map[string]json.RawMessage
+	if rawBody, err := common.GetRequestBody(c); err == nil {
+		_ = json.Unmarshal(rawBody, &bodyMap)
+	}
 
 	modelMapping := c.GetString("model_mapping")
 	if modelMapping != "" && modelMapping != "{}" {
@@ -115,7 +121,7 @@ func OpenRouterClaudeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorW
 		return nil
 	}
 
-	openaiReqMap, err := convertClaudeMessagesToOpenRouterRequest(&claudeReq)
+	openaiReqMap, err := convertClaudeMessagesToOpenRouterRequest(&claudeReq, bodyMap)
 	if err != nil {
 		returnPreConsumedQuota(c, relayInfo, userQuota, preConsumedQuota)
 		writeClaudeMaybeStreamError(c, relayInfo, http.StatusBadRequest, "invalid_request_error", err.Error())
@@ -162,7 +168,7 @@ func OpenRouterClaudeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorW
 	return nil
 }
 
-func convertClaudeMessagesToOpenRouterRequest(req *claudecode.ClaudeRequest) (map[string]any, error) {
+func convertClaudeMessagesToOpenRouterRequest(req *claudecode.ClaudeRequest, bodyMap map[string]json.RawMessage) (map[string]any, error) {
 	if req == nil {
 		return nil, errors.New("request is nil")
 	}
@@ -211,15 +217,90 @@ func convertClaudeMessagesToOpenRouterRequest(req *claudecode.ClaudeRequest) (ma
 			openaiReq["tool_choice"] = toolChoice
 		}
 	}
+	if reasoning := convertClaudeThinkingToReasoning(bodyMap); reasoning != nil {
+		openaiReq["reasoning"] = reasoning
+	}
 
 	// 非 Claude 模型清洗策略：
 	// 1) 删除所有 cache_control（转换阶段天然移除）
-	// 2) 删除 thinking/redacted_thinking block，防止非 Claude 模型 400
-	// 3) 不透传顶层 thinking 字段，避免 OpenAI chat/completions 参数不兼容
-	if !isClaudeModel {
-		delete(openaiReq, "reasoning")
-	}
+	// 2) 删除 messages 内 thinking/redacted_thinking block
+	// 3) 顶层 thinking 统一转为 reasoning（与 claude-code-router 行为一致）
 	return openaiReq, nil
+}
+
+func convertClaudeThinkingToReasoning(bodyMap map[string]json.RawMessage) map[string]any {
+	if bodyMap == nil {
+		return nil
+	}
+	raw, ok := bodyMap["thinking"]
+	if !ok || len(raw) == 0 {
+		return nil
+	}
+	var thinkingMap map[string]any
+	if err := json.Unmarshal(raw, &thinkingMap); err != nil || thinkingMap == nil {
+		return nil
+	}
+	reasoning := map[string]any{}
+	if t, ok := thinkingMap["type"].(string); ok && strings.TrimSpace(t) != "" {
+		reasoning["enabled"] = strings.EqualFold(strings.TrimSpace(t), "enabled")
+	}
+	budgetTokens := parseNumberToInt(thinkingMap["budget_tokens"])
+	if budgetTokens != 0 {
+		if effort := mapBudgetTokensToEffort(budgetTokens); effort != "" {
+			reasoning["effort"] = effort
+		}
+	}
+	if len(reasoning) == 0 {
+		return nil
+	}
+	return reasoning
+}
+
+func parseNumberToInt(v any) int {
+	switch t := v.(type) {
+	case float64:
+		return int(t)
+	case float32:
+		return int(t)
+	case int:
+		return t
+	case int8:
+		return int(t)
+	case int16:
+		return int(t)
+	case int32:
+		return int(t)
+	case int64:
+		return int(t)
+	case uint:
+		return int(t)
+	case uint8:
+		return int(t)
+	case uint16:
+		return int(t)
+	case uint32:
+		return int(t)
+	case uint64:
+		return int(t)
+	case string:
+		i, _ := strconv.Atoi(strings.TrimSpace(t))
+		return i
+	default:
+		return 0
+	}
+}
+
+func mapBudgetTokensToEffort(budgetTokens int) string {
+	if budgetTokens <= 0 {
+		return "none"
+	}
+	if budgetTokens <= 1024 {
+		return "low"
+	}
+	if budgetTokens <= 8192 {
+		return "medium"
+	}
+	return "high"
 }
 
 func isClaudeModelName(model string) bool {
@@ -654,6 +735,8 @@ func streamOpenRouterChatToClaude(c *gin.Context, resp *http.Response, info *rel
 	openBlockIndexes := make([]int, 0, 8)
 	textBlockIndex := -1
 	thinkingBlockIndex := -1
+	thinkingHasDelta := false
+	thinkingHasSignature := false
 	toolBlocks := make(map[int]*openRouterToolBlockState)
 	sawAnyChunk := false
 
@@ -772,6 +855,7 @@ func streamOpenRouterChatToClaude(c *gin.Context, resp *http.Response, info *rel
 				if err := writeClaudeStreamEvent(c, "content_block_delta", deltaPayload); err != nil {
 					return nil, err
 				}
+				thinkingHasDelta = true
 			}
 
 			if content := delta.GetContentString(); content != "" {
@@ -884,6 +968,21 @@ func streamOpenRouterChatToClaude(c *gin.Context, resp *http.Response, info *rel
 		if err := startMessage(); err != nil {
 			return nil, err
 		}
+	}
+
+	if thinkingBlockIndex >= 0 && thinkingHasDelta && !thinkingHasSignature {
+		signaturePayload := map[string]any{
+			"type":  "content_block_delta",
+			"index": thinkingBlockIndex,
+			"delta": map[string]any{
+				"type":      "signature_delta",
+				"signature": fmt.Sprintf("%d", common.GetTimestamp()),
+			},
+		}
+		if err := writeClaudeStreamEvent(c, "content_block_delta", signaturePayload); err != nil {
+			return nil, err
+		}
+		thinkingHasSignature = true
 	}
 
 	for _, idx := range openBlockIndexes {
@@ -1031,6 +1130,7 @@ func nonStreamOpenRouterChatToClaude(c *gin.Context, resp *http.Response, info *
 	}
 	choice := openaiResp.Choices[0]
 	contentBlocks := make([]map[string]any, 0, 4)
+	rawThinkingText, rawThinkingSignature := extractThinkingFromOpenAIResponseRaw(body)
 
 	textContent := strings.TrimSpace(choice.Message.StringContent())
 	if textContent == "" {
@@ -1050,11 +1150,18 @@ func nonStreamOpenRouterChatToClaude(c *gin.Context, resp *http.Response, info *
 		})
 	}
 
-	if thinkingText := extractReasoningFromMessage(&choice.Message); thinkingText != "" {
+	if thinkingText := extractReasoningFromMessage(&choice.Message); thinkingText != "" || rawThinkingText != "" {
+		if thinkingText == "" {
+			thinkingText = rawThinkingText
+		}
+		signature := rawThinkingSignature
+		if signature == "" {
+			signature = "skip_thought_signature_validator"
+		}
 		contentBlocks = append(contentBlocks, map[string]any{
 			"type":      "thinking",
 			"thinking":  thinkingText,
-			"signature": "skip_thought_signature_validator",
+			"signature": signature,
 		})
 	}
 
@@ -1135,6 +1242,37 @@ func nonStreamOpenRouterChatToClaude(c *gin.Context, resp *http.Response, info *
 		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 	}
 	return usage, nil
+}
+
+func extractThinkingFromOpenAIResponseRaw(body []byte) (string, string) {
+	var root map[string]any
+	if err := json.Unmarshal(body, &root); err != nil {
+		return "", ""
+	}
+	choices, ok := root["choices"].([]any)
+	if !ok || len(choices) == 0 {
+		return "", ""
+	}
+	firstChoice, ok := choices[0].(map[string]any)
+	if !ok {
+		return "", ""
+	}
+	message, ok := firstChoice["message"].(map[string]any)
+	if !ok {
+		return "", ""
+	}
+	if thinkingMap, ok := message["thinking"].(map[string]any); ok {
+		text, _ := thinkingMap["content"].(string)
+		signature, _ := thinkingMap["signature"].(string)
+		return strings.TrimSpace(text), strings.TrimSpace(signature)
+	}
+	if reasoningContent, ok := message["reasoning_content"].(string); ok && strings.TrimSpace(reasoningContent) != "" {
+		return strings.TrimSpace(reasoningContent), ""
+	}
+	if reasoningText, ok := message["reasoning"].(string); ok && strings.TrimSpace(reasoningText) != "" {
+		return strings.TrimSpace(reasoningText), ""
+	}
+	return "", ""
 }
 
 func mapOpenAIFinishReasonToClaude(reason string) string {
