@@ -1,7 +1,10 @@
 package common
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"strings"
+	"time"
 )
 
 func ShouldNotifyByGroups(configuredGroups []string, currentGroup string) bool {
@@ -72,5 +75,29 @@ func SendConfiguredFeishuNotification(title string, content string, groupExpress
 	if !ShouldNotifyByGroupExpression(FeishuNotificationGroups, groupExpression) {
 		return nil
 	}
-	return SendFeishuWebhook(FeishuWebhookURL, title, content)
+
+	// 飞书通知去重：与邮件去重一致，先做内容归一化，避免随机 UUID/请求ID 导致缓存失效
+	cacheKey := ""
+	if RedisEnabled && RDB != nil {
+		cacheText := strings.TrimSpace(groupExpression) + "\n" + strings.TrimSpace(title) + "\n" + strings.TrimSpace(content)
+		normalized := normalizeContentForCache(cacheText)
+		if len(normalized) > 100 {
+			normalized = normalized[:100]
+		}
+		hash := md5.Sum([]byte(normalized))
+		cacheKey = "feishu_cache:" + hex.EncodeToString(hash[:])
+		redisValue, _ := RedisGet(cacheKey)
+		if redisValue != "" {
+			return nil
+		}
+	}
+
+	err := SendFeishuWebhook(FeishuWebhookURL, title, content)
+	if err != nil {
+		return err
+	}
+	if cacheKey != "" {
+		_ = RedisSet(cacheKey, "1", time.Duration(GetEnvOrDefault("INTERVAL_TIME", 60))*time.Second)
+	}
+	return nil
 }
