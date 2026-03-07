@@ -836,6 +836,38 @@ func streamOpenRouterChatToClaude(c *gin.Context, resp *http.Response, info *rel
 		}
 		return writeClaudeStreamEvent(c, "message_start", payload)
 	}
+	writeTextDelta := func(text string) error {
+		content := stripOpenRouterVisibleControlTokens(text)
+		if strings.TrimSpace(content) == "" {
+			return nil
+		}
+		responseText.WriteString(content)
+		if textBlockIndex < 0 {
+			textBlockIndex = nextBlockIndex
+			nextBlockIndex++
+			openBlockIndexes = append(openBlockIndexes, textBlockIndex)
+			startPayload := map[string]any{
+				"type":  "content_block_start",
+				"index": textBlockIndex,
+				"content_block": map[string]any{
+					"type": "text",
+					"text": "",
+				},
+			}
+			if err := writeClaudeStreamEvent(c, "content_block_start", startPayload); err != nil {
+				return err
+			}
+		}
+		deltaPayload := map[string]any{
+			"type":  "content_block_delta",
+			"index": textBlockIndex,
+			"delta": map[string]any{
+				"type": "text_delta",
+				"text": content,
+			},
+		}
+		return writeClaudeStreamEvent(c, "content_block_delta", deltaPayload)
+	}
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
@@ -914,7 +946,18 @@ streamReadLoop:
 
 			var chunk dto.ChatCompletionsStreamResponse
 			normalizedData := normalizeOpenRouterStreamChunkData(data)
+			refusalTexts := extractOpenRouterRefusalTexts(normalizedData)
 			if err := json.Unmarshal(normalizedData, &chunk); err != nil {
+				if len(refusalTexts) > 0 {
+					if err = startMessage(); err != nil {
+						return nil, err
+					}
+					for _, refusalText := range refusalTexts {
+						if err = writeTextDelta(refusalText); err != nil {
+							return nil, err
+						}
+					}
+				}
 				continue
 			}
 			if strings.TrimSpace(chunk.Id) != "" {
@@ -968,33 +1011,13 @@ streamReadLoop:
 					thinkingHasDelta = true
 				}
 
-				if content := stripOpenRouterVisibleControlTokens(delta.GetContentString()); content != "" {
-					responseText.WriteString(content)
-					if textBlockIndex < 0 {
-						textBlockIndex = nextBlockIndex
-						nextBlockIndex++
-						openBlockIndexes = append(openBlockIndexes, textBlockIndex)
-						startPayload := map[string]any{
-							"type":  "content_block_start",
-							"index": textBlockIndex,
-							"content_block": map[string]any{
-								"type": "text",
-								"text": "",
-							},
-						}
-						if err := writeClaudeStreamEvent(c, "content_block_start", startPayload); err != nil {
-							return nil, err
-						}
+				if content := delta.GetContentString(); content != "" {
+					if err := writeTextDelta(content); err != nil {
+						return nil, err
 					}
-					deltaPayload := map[string]any{
-						"type":  "content_block_delta",
-						"index": textBlockIndex,
-						"delta": map[string]any{
-							"type": "text_delta",
-							"text": content,
-						},
-					}
-					if err := writeClaudeStreamEvent(c, "content_block_delta", deltaPayload); err != nil {
+				}
+				for _, refusalText := range refusalTexts {
+					if err := writeTextDelta(refusalText); err != nil {
 						return nil, err
 					}
 				}
@@ -1081,19 +1104,6 @@ streamReadDone:
 	}
 	if stopReason == "end_turn" && hasToolCall {
 		stopReason = "tool_use"
-	}
-	if responseText.Len() == 0 && !hasToolCall && !thinkingHasDelta {
-		errPayload := map[string]any{
-			"type": "error",
-			"error": map[string]any{
-				"type":    "api_error",
-				"message": "upstream returned empty stream response",
-			},
-		}
-		if err := writeClaudeStreamEvent(c, "error", errPayload); err != nil {
-			return nil, err
-		}
-		return nil, errors.New("openrouter upstream returned empty stream response")
 	}
 
 	if thinkingBlockIndex >= 0 && thinkingHasDelta && !thinkingHasSignature {
@@ -1314,6 +1324,43 @@ func extractOpenRouterChunkContentText(content any) string {
 	default:
 		return ""
 	}
+}
+
+func extractOpenRouterRefusalTexts(data []byte) []string {
+	var root map[string]any
+	if err := json.Unmarshal(data, &root); err != nil || root == nil {
+		return nil
+	}
+	choices, ok := root["choices"].([]any)
+	if !ok || len(choices) == 0 {
+		return nil
+	}
+	result := make([]string, 0, 2)
+	seen := make(map[string]struct{}, 2)
+	for _, choiceRaw := range choices {
+		choice, ok := choiceRaw.(map[string]any)
+		if !ok {
+			continue
+		}
+		delta, ok := choice["delta"].(map[string]any)
+		if !ok {
+			continue
+		}
+		refusalRaw, ok := delta["refusal"]
+		if !ok {
+			continue
+		}
+		refusalText := strings.TrimSpace(extractOpenRouterChunkContentText(refusalRaw))
+		if refusalText == "" {
+			continue
+		}
+		if _, exists := seen[refusalText]; exists {
+			continue
+		}
+		seen[refusalText] = struct{}{}
+		result = append(result, refusalText)
+	}
+	return result
 }
 
 func parseOpenAIStreamError(errObj any) (string, string) {
