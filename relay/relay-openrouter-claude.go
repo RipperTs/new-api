@@ -135,14 +135,12 @@ func OpenRouterClaudeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorW
 		return nil
 	}
 	applyOpenRouterProviderPreference(openaiReqMap, relayInfo.ChannelSetting)
-	common.LogInfo(c, "openrouter request summary | "+summarizeOpenRouterRequest(openaiReqMap))
 	jsonData, err := json.Marshal(openaiReqMap)
 	if err != nil {
 		returnPreConsumedQuota(c, relayInfo, userQuota, preConsumedQuota)
 		writeClaudeMaybeStreamError(c, relayInfo, http.StatusInternalServerError, "api_error", err.Error())
 		return nil
 	}
-	common.LogInfo(c, fmt.Sprintf("openrouter upstream request body (%d bytes) | %s", len(jsonData), string(jsonData)))
 
 	resp, err := doOpenRouterChatCompletionsRequest(c, relayInfo, jsonData)
 	if err != nil {
@@ -778,138 +776,6 @@ func applyOpenRouterProviderPreference(openaiReq map[string]any, setting map[str
 	}
 }
 
-func summarizeOpenRouterRequest(req map[string]any) string {
-	if req == nil {
-		return "nil_request"
-	}
-	model, _ := req["model"].(string)
-	stream, _ := req["stream"].(bool)
-	maxTokens := parseNumberToInt(req["max_tokens"])
-	messageCount := 0
-	imageCount := 0
-	textPartCount := 0
-	roles := make([]string, 0, 8)
-	firstImagePrefix := ""
-	firstImageLen := 0
-	firstImageType := ""
-	messagesRaw, _ := req["messages"].([]map[string]any)
-	if messagesRaw == nil {
-		if arr, ok := req["messages"].([]any); ok {
-			for _, item := range arr {
-				m, ok := item.(map[string]any)
-				if !ok {
-					continue
-				}
-				messagesRaw = append(messagesRaw, m)
-			}
-		}
-	}
-	for _, msg := range messagesRaw {
-		messageCount++
-		role, _ := msg["role"].(string)
-		if strings.TrimSpace(role) != "" && len(roles) < 8 {
-			roles = append(roles, role)
-		}
-		content, exists := msg["content"]
-		if !exists {
-			continue
-		}
-		parts := toAnySlice(content)
-		if len(parts) == 0 {
-			continue
-		}
-		for _, partRaw := range parts {
-			part, ok := partRaw.(map[string]any)
-			if !ok {
-				continue
-			}
-			partType, _ := part["type"].(string)
-			switch partType {
-			case "text":
-				textPartCount++
-			case "image_url":
-				imageCount++
-				if firstImagePrefix == "" {
-					if imageObj, ok := part["image_url"].(map[string]any); ok {
-						if url, ok := imageObj["url"].(string); ok {
-							firstImageType = detectImageURLType(url)
-							firstImageLen = len(url)
-							firstImagePrefix = truncateOpenRouterDebugString(url, 64)
-						}
-					} else if url, ok := part["image_url"].(string); ok {
-						firstImageType = detectImageURLType(url)
-						firstImageLen = len(url)
-						firstImagePrefix = truncateOpenRouterDebugString(url, 64)
-					}
-				}
-			}
-		}
-	}
-	_, hasReasoning := req["reasoning"]
-	providerJSON := "-"
-	if providerRaw, ok := req["provider"]; ok {
-		if b, err := json.Marshal(providerRaw); err == nil {
-			providerJSON = string(b)
-		} else {
-			providerJSON = fmt.Sprintf("%T", providerRaw)
-		}
-	}
-	return fmt.Sprintf(
-		"model=%s stream=%v max_tokens=%d messages=%d roles=%v text_parts=%d image_parts=%d first_image_type=%s first_image_len=%d first_image_prefix=%s has_reasoning=%v provider=%s",
-		model,
-		stream,
-		maxTokens,
-		messageCount,
-		roles,
-		textPartCount,
-		imageCount,
-		firstImageType,
-		firstImageLen,
-		firstImagePrefix,
-		hasReasoning,
-		providerJSON,
-	)
-}
-
-func toAnySlice(v any) []any {
-	switch t := v.(type) {
-	case []any:
-		return t
-	case []map[string]any:
-		arr := make([]any, 0, len(t))
-		for _, item := range t {
-			arr = append(arr, item)
-		}
-		return arr
-	default:
-		return nil
-	}
-}
-
-func detectImageURLType(url string) string {
-	u := strings.TrimSpace(strings.ToLower(url))
-	switch {
-	case strings.HasPrefix(u, "data:image/"):
-		return "data_url"
-	case strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://"):
-		return "http_url"
-	case u == "":
-		return "empty"
-	default:
-		return "other"
-	}
-}
-
-func truncateOpenRouterDebugString(s string, n int) string {
-	if n <= 0 {
-		return ""
-	}
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "..."
-}
-
 func buildOpenRouterChatCompletionsURL(baseURL string) string {
 	base := strings.TrimSpace(baseURL)
 	if base == "" {
@@ -946,8 +812,6 @@ func streamOpenRouterChatToClaude(c *gin.Context, resp *http.Response, info *rel
 	thinkingHasSignature := false
 	toolBlocks := make(map[int]*openRouterToolBlockState)
 	sawAnyChunk := false
-	unmarshalErrCount := 0
-	debugSamples := make([]string, 0, 8)
 
 	startMessage := func() error {
 		if started {
@@ -1005,7 +869,6 @@ streamReadLoop:
 		select {
 		case <-ticker.C:
 			_ = resp.Body.Close()
-			common.LogError(c, fmt.Sprintf("openrouter streaming timeout after %ds without chunks", int(streamingTimeout/time.Second)))
 			return nil, errors.New("openrouter stream timeout")
 		case line, ok := <-lineCh:
 			if !ok {
@@ -1045,20 +908,13 @@ streamReadLoop:
 					if writeErr := writeClaudeStreamEvent(c, "error", payload); writeErr != nil {
 						return nil, writeErr
 					}
-					common.LogWarn(c, fmt.Sprintf("openrouter stream error chunk | type=%s | message=%s", errType, errMsg))
 					return nil, errors.New("openrouter upstream stream error: " + errMsg)
 				}
 			}
 
 			var chunk dto.ChatCompletionsStreamResponse
-			addOpenRouterDebugSample(&debugSamples, "raw", []byte(data))
 			normalizedData := normalizeOpenRouterStreamChunkData(data)
-			if !bytes.Equal([]byte(data), normalizedData) {
-				addOpenRouterDebugSample(&debugSamples, "normalized", normalizedData)
-			}
 			if err := json.Unmarshal(normalizedData, &chunk); err != nil {
-				unmarshalErrCount++
-				addOpenRouterDebugSample(&debugSamples, "unmarshal_err", []byte(err.Error()))
 				continue
 			}
 			if strings.TrimSpace(chunk.Id) != "" {
@@ -1227,15 +1083,6 @@ streamReadDone:
 		stopReason = "tool_use"
 	}
 	if responseText.Len() == 0 && !hasToolCall && !thinkingHasDelta {
-		common.LogWarn(c, fmt.Sprintf(
-			"openrouter stream empty output | model=%s | saw_any_chunk=%v | prompt_tokens=%d | completion_tokens=%d | unmarshal_errors=%d | samples=%s",
-			info.UpstreamModelName,
-			sawAnyChunk,
-			usage.PromptTokens,
-			usage.CompletionTokens,
-			unmarshalErrCount,
-			strings.Join(debugSamples, " || "),
-		))
 		errPayload := map[string]any{
 			"type": "error",
 			"error": map[string]any{
@@ -1467,21 +1314,6 @@ func extractOpenRouterChunkContentText(content any) string {
 	default:
 		return ""
 	}
-}
-
-func addOpenRouterDebugSample(samples *[]string, label string, data []byte) {
-	if samples == nil {
-		return
-	}
-	if len(*samples) >= 8 {
-		return
-	}
-	s := strings.TrimSpace(string(data))
-	s = strings.ReplaceAll(s, "\n", " ")
-	if len(s) > 240 {
-		s = s[:240] + "..."
-	}
-	*samples = append(*samples, label+"="+s)
 }
 
 func parseOpenAIStreamError(errObj any) (string, string) {
