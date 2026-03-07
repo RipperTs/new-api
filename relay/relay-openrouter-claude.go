@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"one-api/common"
+	"one-api/constant"
 	"one-api/dto"
 	"one-api/relay/channel/claudecode"
 	relaycommon "one-api/relay/common"
@@ -18,6 +19,7 @@ import (
 	"one-api/setting"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type openRouterToolBlockState struct {
@@ -973,209 +975,246 @@ func streamOpenRouterChatToClaude(c *gin.Context, resp *http.Response, info *rel
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-	for scanner.Scan() {
-		line := scanner.Text()
-		info.SetFirstResponseTime()
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if data == "" {
-			continue
-		}
-		if data == "[DONE]" {
-			break
-		}
-		sawAnyChunk = true
+	streamingTimeout := time.Duration(constant.StreamingTimeout) * time.Second
+	if streamingTimeout <= 0 {
+		streamingTimeout = 60 * time.Second
+	}
+	ticker := time.NewTicker(streamingTimeout)
+	defer ticker.Stop()
 
-		var errorChunk map[string]any
-		if err := json.Unmarshal([]byte(data), &errorChunk); err == nil {
-			if errObj, ok := errorChunk["error"]; ok && errObj != nil {
-				if err = startMessage(); err != nil {
-					return nil, err
-				}
-				errType, errMsg := parseOpenAIStreamError(errObj)
-				payload := map[string]any{
-					"type": "error",
-					"error": map[string]any{
-						"type":    errType,
-						"message": errMsg,
-					},
-				}
-				if writeErr := writeClaudeStreamEvent(c, "error", payload); writeErr != nil {
-					return nil, writeErr
-				}
-				common.LogWarn(c, fmt.Sprintf("openrouter stream error chunk | type=%s | message=%s", errType, errMsg))
-				return nil, errors.New("openrouter upstream stream error: " + errMsg)
+	lineCh := make(chan string, 64)
+	scanErrCh := make(chan error, 1)
+	stopReaderCh := make(chan struct{})
+	defer close(stopReaderCh)
+
+	go func() {
+		defer close(lineCh)
+		for scanner.Scan() {
+			line := scanner.Text()
+			select {
+			case lineCh <- line:
+			case <-stopReaderCh:
+				return
 			}
 		}
+		scanErrCh <- scanner.Err()
+	}()
 
-		var chunk dto.ChatCompletionsStreamResponse
-		addOpenRouterDebugSample(&debugSamples, "raw", []byte(data))
-		normalizedData := normalizeOpenRouterStreamChunkData(data)
-		if !bytes.Equal([]byte(data), normalizedData) {
-			addOpenRouterDebugSample(&debugSamples, "normalized", normalizedData)
-		}
-		if err := json.Unmarshal(normalizedData, &chunk); err != nil {
-			unmarshalErrCount++
-			addOpenRouterDebugSample(&debugSamples, "unmarshal_err", []byte(err.Error()))
-			continue
-		}
-		if strings.TrimSpace(chunk.Id) != "" {
-			messageID = chunk.Id
-		}
-		if strings.TrimSpace(chunk.Model) != "" {
-			modelName = chunk.Model
-			info.UpstreamModelName = modelName
-		}
-		if err := startMessage(); err != nil {
-			return nil, err
-		}
+streamReadLoop:
+	for {
+		select {
+		case <-ticker.C:
+			_ = resp.Body.Close()
+			common.LogError(c, fmt.Sprintf("openrouter streaming timeout after %ds without chunks", int(streamingTimeout/time.Second)))
+			return nil, errors.New("openrouter stream timeout")
+		case line, ok := <-lineCh:
+			if !ok {
+				if err := <-scanErrCh; err != nil {
+					return nil, err
+				}
+				goto streamReadDone
+			}
+			info.SetFirstResponseTime()
+			ticker.Reset(streamingTimeout)
+			if !strings.HasPrefix(line, "data:") {
+				continue
+			}
+			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+			if data == "" {
+				continue
+			}
+			if data == "[DONE]" {
+				break streamReadLoop
+			}
+			sawAnyChunk = true
 
-		if chunk.Usage != nil {
-			usage.PromptTokens = chunk.Usage.PromptTokens
-			usage.CompletionTokens = chunk.Usage.CompletionTokens
-			usage.TotalTokens = chunk.Usage.TotalTokens
-		}
-
-		for _, choice := range chunk.Choices {
-			delta := choice.Delta
-
-			if reasoningText := stripOpenRouterVisibleControlTokens(extractReasoningFromDelta(&delta)); strings.TrimSpace(reasoningText) != "" {
-				if thinkingBlockIndex < 0 {
-					thinkingBlockIndex = nextBlockIndex
-					nextBlockIndex++
-					openBlockIndexes = append(openBlockIndexes, thinkingBlockIndex)
-					startPayload := map[string]any{
-						"type":  "content_block_start",
-						"index": thinkingBlockIndex,
-						"content_block": map[string]any{
-							"type":     "thinking",
-							"thinking": "",
-						},
-					}
-					if err := writeClaudeStreamEvent(c, "content_block_start", startPayload); err != nil {
+			var errorChunk map[string]any
+			if err := json.Unmarshal([]byte(data), &errorChunk); err == nil {
+				if errObj, ok := errorChunk["error"]; ok && errObj != nil {
+					if err = startMessage(); err != nil {
 						return nil, err
 					}
-				}
-				deltaPayload := map[string]any{
-					"type":  "content_block_delta",
-					"index": thinkingBlockIndex,
-					"delta": map[string]any{
-						"type":     "thinking_delta",
-						"thinking": reasoningText,
-					},
-				}
-				if err := writeClaudeStreamEvent(c, "content_block_delta", deltaPayload); err != nil {
-					return nil, err
-				}
-				thinkingHasDelta = true
-			}
-
-			if content := stripOpenRouterVisibleControlTokens(delta.GetContentString()); content != "" {
-				responseText.WriteString(content)
-				if textBlockIndex < 0 {
-					textBlockIndex = nextBlockIndex
-					nextBlockIndex++
-					openBlockIndexes = append(openBlockIndexes, textBlockIndex)
-					startPayload := map[string]any{
-						"type":  "content_block_start",
-						"index": textBlockIndex,
-						"content_block": map[string]any{
-							"type": "text",
-							"text": "",
+					errType, errMsg := parseOpenAIStreamError(errObj)
+					payload := map[string]any{
+						"type": "error",
+						"error": map[string]any{
+							"type":    errType,
+							"message": errMsg,
 						},
 					}
-					if err := writeClaudeStreamEvent(c, "content_block_start", startPayload); err != nil {
-						return nil, err
+					if writeErr := writeClaudeStreamEvent(c, "error", payload); writeErr != nil {
+						return nil, writeErr
 					}
-				}
-				deltaPayload := map[string]any{
-					"type":  "content_block_delta",
-					"index": textBlockIndex,
-					"delta": map[string]any{
-						"type": "text_delta",
-						"text": content,
-					},
-				}
-				if err := writeClaudeStreamEvent(c, "content_block_delta", deltaPayload); err != nil {
-					return nil, err
+					common.LogWarn(c, fmt.Sprintf("openrouter stream error chunk | type=%s | message=%s", errType, errMsg))
+					return nil, errors.New("openrouter upstream stream error: " + errMsg)
 				}
 			}
 
-			if len(delta.ToolCalls) > 0 {
-				hasToolCall = true
-				for _, toolCall := range delta.ToolCalls {
-					toolCallIndex := 0
-					if toolCall.Index != nil {
-						toolCallIndex = *toolCall.Index
-					}
-					state, ok := toolBlocks[toolCallIndex]
-					if !ok {
-						blockIndex := nextBlockIndex
+			var chunk dto.ChatCompletionsStreamResponse
+			addOpenRouterDebugSample(&debugSamples, "raw", []byte(data))
+			normalizedData := normalizeOpenRouterStreamChunkData(data)
+			if !bytes.Equal([]byte(data), normalizedData) {
+				addOpenRouterDebugSample(&debugSamples, "normalized", normalizedData)
+			}
+			if err := json.Unmarshal(normalizedData, &chunk); err != nil {
+				unmarshalErrCount++
+				addOpenRouterDebugSample(&debugSamples, "unmarshal_err", []byte(err.Error()))
+				continue
+			}
+			if strings.TrimSpace(chunk.Id) != "" {
+				messageID = chunk.Id
+			}
+			if strings.TrimSpace(chunk.Model) != "" {
+				modelName = chunk.Model
+				info.UpstreamModelName = modelName
+			}
+			if err := startMessage(); err != nil {
+				return nil, err
+			}
+
+			if chunk.Usage != nil {
+				usage.PromptTokens = chunk.Usage.PromptTokens
+				usage.CompletionTokens = chunk.Usage.CompletionTokens
+				usage.TotalTokens = chunk.Usage.TotalTokens
+			}
+
+			for _, choice := range chunk.Choices {
+				delta := choice.Delta
+
+				if reasoningText := stripOpenRouterVisibleControlTokens(extractReasoningFromDelta(&delta)); strings.TrimSpace(reasoningText) != "" {
+					if thinkingBlockIndex < 0 {
+						thinkingBlockIndex = nextBlockIndex
 						nextBlockIndex++
-						openBlockIndexes = append(openBlockIndexes, blockIndex)
-						toolID := strings.TrimSpace(toolCall.ID)
-						if toolID == "" {
-							toolID = fmt.Sprintf("call_%s_%d", common.GetUUID(), toolCallIndex)
-						}
-						toolName := strings.TrimSpace(toolCall.Function.Name)
-						if toolName == "" {
-							toolName = fmt.Sprintf("tool_%d", toolCallIndex)
-						}
-						state = &openRouterToolBlockState{
-							blockIndex: blockIndex,
-							id:         toolID,
-							name:       toolName,
-						}
-						toolBlocks[toolCallIndex] = state
+						openBlockIndexes = append(openBlockIndexes, thinkingBlockIndex)
 						startPayload := map[string]any{
 							"type":  "content_block_start",
-							"index": state.blockIndex,
+							"index": thinkingBlockIndex,
 							"content_block": map[string]any{
-								"type":  "tool_use",
-								"id":    state.id,
-								"name":  state.name,
-								"input": map[string]any{},
+								"type":     "thinking",
+								"thinking": "",
 							},
 						}
 						if err := writeClaudeStreamEvent(c, "content_block_start", startPayload); err != nil {
 							return nil, err
 						}
 					}
-					if strings.TrimSpace(toolCall.Function.Name) != "" {
-						state.name = toolCall.Function.Name
+					deltaPayload := map[string]any{
+						"type":  "content_block_delta",
+						"index": thinkingBlockIndex,
+						"delta": map[string]any{
+							"type":     "thinking_delta",
+							"thinking": reasoningText,
+						},
 					}
-					if strings.TrimSpace(toolCall.ID) != "" {
-						state.id = toolCall.ID
+					if err := writeClaudeStreamEvent(c, "content_block_delta", deltaPayload); err != nil {
+						return nil, err
 					}
-					if strings.TrimSpace(toolCall.Function.Arguments) != "" {
-						responseText.WriteString(state.name)
-						responseText.WriteString(toolCall.Function.Arguments)
-						deltaPayload := map[string]any{
-							"type":  "content_block_delta",
-							"index": state.blockIndex,
-							"delta": map[string]any{
-								"type":         "input_json_delta",
-								"partial_json": toolCall.Function.Arguments,
+					thinkingHasDelta = true
+				}
+
+				if content := stripOpenRouterVisibleControlTokens(delta.GetContentString()); content != "" {
+					responseText.WriteString(content)
+					if textBlockIndex < 0 {
+						textBlockIndex = nextBlockIndex
+						nextBlockIndex++
+						openBlockIndexes = append(openBlockIndexes, textBlockIndex)
+						startPayload := map[string]any{
+							"type":  "content_block_start",
+							"index": textBlockIndex,
+							"content_block": map[string]any{
+								"type": "text",
+								"text": "",
 							},
 						}
-						if err := writeClaudeStreamEvent(c, "content_block_delta", deltaPayload); err != nil {
+						if err := writeClaudeStreamEvent(c, "content_block_start", startPayload); err != nil {
 							return nil, err
 						}
 					}
+					deltaPayload := map[string]any{
+						"type":  "content_block_delta",
+						"index": textBlockIndex,
+						"delta": map[string]any{
+							"type": "text_delta",
+							"text": content,
+						},
+					}
+					if err := writeClaudeStreamEvent(c, "content_block_delta", deltaPayload); err != nil {
+						return nil, err
+					}
 				}
-			}
 
-			if choice.FinishReason != nil {
-				stopReason = mapOpenAIFinishReasonToClaude(*choice.FinishReason)
+				if len(delta.ToolCalls) > 0 {
+					hasToolCall = true
+					for _, toolCall := range delta.ToolCalls {
+						toolCallIndex := 0
+						if toolCall.Index != nil {
+							toolCallIndex = *toolCall.Index
+						}
+						state, ok := toolBlocks[toolCallIndex]
+						if !ok {
+							blockIndex := nextBlockIndex
+							nextBlockIndex++
+							openBlockIndexes = append(openBlockIndexes, blockIndex)
+							toolID := strings.TrimSpace(toolCall.ID)
+							if toolID == "" {
+								toolID = fmt.Sprintf("call_%s_%d", common.GetUUID(), toolCallIndex)
+							}
+							toolName := strings.TrimSpace(toolCall.Function.Name)
+							if toolName == "" {
+								toolName = fmt.Sprintf("tool_%d", toolCallIndex)
+							}
+							state = &openRouterToolBlockState{
+								blockIndex: blockIndex,
+								id:         toolID,
+								name:       toolName,
+							}
+							toolBlocks[toolCallIndex] = state
+							startPayload := map[string]any{
+								"type":  "content_block_start",
+								"index": state.blockIndex,
+								"content_block": map[string]any{
+									"type":  "tool_use",
+									"id":    state.id,
+									"name":  state.name,
+									"input": map[string]any{},
+								},
+							}
+							if err := writeClaudeStreamEvent(c, "content_block_start", startPayload); err != nil {
+								return nil, err
+							}
+						}
+						if strings.TrimSpace(toolCall.Function.Name) != "" {
+							state.name = toolCall.Function.Name
+						}
+						if strings.TrimSpace(toolCall.ID) != "" {
+							state.id = toolCall.ID
+						}
+						if strings.TrimSpace(toolCall.Function.Arguments) != "" {
+							responseText.WriteString(state.name)
+							responseText.WriteString(toolCall.Function.Arguments)
+							deltaPayload := map[string]any{
+								"type":  "content_block_delta",
+								"index": state.blockIndex,
+								"delta": map[string]any{
+									"type":         "input_json_delta",
+									"partial_json": toolCall.Function.Arguments,
+								},
+							}
+							if err := writeClaudeStreamEvent(c, "content_block_delta", deltaPayload); err != nil {
+								return nil, err
+							}
+						}
+					}
+				}
+
+				if choice.FinishReason != nil {
+					stopReason = mapOpenAIFinishReasonToClaude(*choice.FinishReason)
+				}
 			}
 		}
 	}
 
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
+streamReadDone:
 	if !sawAnyChunk {
 		return nil, io.ErrUnexpectedEOF
 	}
