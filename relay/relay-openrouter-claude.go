@@ -26,6 +26,11 @@ type openRouterToolBlockState struct {
 	name       string
 }
 
+var openRouterVisibleControlTokenReplacer = strings.NewReplacer(
+	"<|begin_of_box|>", "",
+	"<|end_of_box|>", "",
+)
+
 func ClaudeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) {
 	channelType := c.GetInt("channel_type")
 	switch channelType {
@@ -127,12 +132,15 @@ func OpenRouterClaudeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorW
 		writeClaudeMaybeStreamError(c, relayInfo, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return nil
 	}
+	applyOpenRouterProviderPreference(openaiReqMap, relayInfo.ChannelSetting)
+	common.LogInfo(c, "openrouter request summary | "+summarizeOpenRouterRequest(openaiReqMap))
 	jsonData, err := json.Marshal(openaiReqMap)
 	if err != nil {
 		returnPreConsumedQuota(c, relayInfo, userQuota, preConsumedQuota)
 		writeClaudeMaybeStreamError(c, relayInfo, http.StatusInternalServerError, "api_error", err.Error())
 		return nil
 	}
+	common.LogInfo(c, fmt.Sprintf("openrouter upstream request body (%d bytes) | %s", len(jsonData), string(jsonData)))
 
 	resp, err := doOpenRouterChatCompletionsRequest(c, relayInfo, jsonData)
 	if err != nil {
@@ -704,6 +712,202 @@ func firstNonEmptySetting(m map[string]any, keys ...string) string {
 	return ""
 }
 
+func applyOpenRouterProviderPreference(openaiReq map[string]any, setting map[string]any) {
+	if openaiReq == nil || setting == nil {
+		return
+	}
+	if providerRaw, ok := setting["provider"]; ok {
+		openaiReq["provider"] = providerRaw
+		return
+	}
+	if providerRaw, ok := setting["providers"]; ok {
+		switch v := providerRaw.(type) {
+		case []any, map[string]any:
+			openaiReq["provider"] = v
+			return
+		case []string:
+			if len(v) > 0 {
+				openaiReq["provider"] = map[string]any{"only": v}
+				return
+			}
+		case string:
+			if strings.TrimSpace(v) != "" {
+				openaiReq["provider"] = map[string]any{"only": []string{strings.TrimSpace(v)}}
+				return
+			}
+		}
+	}
+	if providerRaw, ok := setting["provider_only"]; ok {
+		switch v := providerRaw.(type) {
+		case string:
+			if strings.TrimSpace(v) != "" {
+				openaiReq["provider"] = map[string]any{"only": []string{strings.TrimSpace(v)}}
+				return
+			}
+		case []string:
+			if len(v) > 0 {
+				openaiReq["provider"] = map[string]any{"only": v}
+				return
+			}
+		case []any:
+			if len(v) > 0 {
+				openaiReq["provider"] = map[string]any{"only": v}
+				return
+			}
+		}
+	}
+	if providerRaw, ok := setting["openrouter_provider"]; ok {
+		switch v := providerRaw.(type) {
+		case string:
+			if strings.TrimSpace(v) != "" {
+				openaiReq["provider"] = map[string]any{
+					"only": []string{strings.TrimSpace(v)},
+				}
+			}
+		case []string:
+			if len(v) > 0 {
+				openaiReq["provider"] = map[string]any{
+					"only": v,
+				}
+			}
+		case []any, map[string]any:
+			openaiReq["provider"] = v
+		}
+	}
+}
+
+func summarizeOpenRouterRequest(req map[string]any) string {
+	if req == nil {
+		return "nil_request"
+	}
+	model, _ := req["model"].(string)
+	stream, _ := req["stream"].(bool)
+	maxTokens := parseNumberToInt(req["max_tokens"])
+	messageCount := 0
+	imageCount := 0
+	textPartCount := 0
+	roles := make([]string, 0, 8)
+	firstImagePrefix := ""
+	firstImageLen := 0
+	firstImageType := ""
+	messagesRaw, _ := req["messages"].([]map[string]any)
+	if messagesRaw == nil {
+		if arr, ok := req["messages"].([]any); ok {
+			for _, item := range arr {
+				m, ok := item.(map[string]any)
+				if !ok {
+					continue
+				}
+				messagesRaw = append(messagesRaw, m)
+			}
+		}
+	}
+	for _, msg := range messagesRaw {
+		messageCount++
+		role, _ := msg["role"].(string)
+		if strings.TrimSpace(role) != "" && len(roles) < 8 {
+			roles = append(roles, role)
+		}
+		content, exists := msg["content"]
+		if !exists {
+			continue
+		}
+		parts := toAnySlice(content)
+		if len(parts) == 0 {
+			continue
+		}
+		for _, partRaw := range parts {
+			part, ok := partRaw.(map[string]any)
+			if !ok {
+				continue
+			}
+			partType, _ := part["type"].(string)
+			switch partType {
+			case "text":
+				textPartCount++
+			case "image_url":
+				imageCount++
+				if firstImagePrefix == "" {
+					if imageObj, ok := part["image_url"].(map[string]any); ok {
+						if url, ok := imageObj["url"].(string); ok {
+							firstImageType = detectImageURLType(url)
+							firstImageLen = len(url)
+							firstImagePrefix = truncateOpenRouterDebugString(url, 64)
+						}
+					} else if url, ok := part["image_url"].(string); ok {
+						firstImageType = detectImageURLType(url)
+						firstImageLen = len(url)
+						firstImagePrefix = truncateOpenRouterDebugString(url, 64)
+					}
+				}
+			}
+		}
+	}
+	_, hasReasoning := req["reasoning"]
+	providerJSON := "-"
+	if providerRaw, ok := req["provider"]; ok {
+		if b, err := json.Marshal(providerRaw); err == nil {
+			providerJSON = string(b)
+		} else {
+			providerJSON = fmt.Sprintf("%T", providerRaw)
+		}
+	}
+	return fmt.Sprintf(
+		"model=%s stream=%v max_tokens=%d messages=%d roles=%v text_parts=%d image_parts=%d first_image_type=%s first_image_len=%d first_image_prefix=%s has_reasoning=%v provider=%s",
+		model,
+		stream,
+		maxTokens,
+		messageCount,
+		roles,
+		textPartCount,
+		imageCount,
+		firstImageType,
+		firstImageLen,
+		firstImagePrefix,
+		hasReasoning,
+		providerJSON,
+	)
+}
+
+func toAnySlice(v any) []any {
+	switch t := v.(type) {
+	case []any:
+		return t
+	case []map[string]any:
+		arr := make([]any, 0, len(t))
+		for _, item := range t {
+			arr = append(arr, item)
+		}
+		return arr
+	default:
+		return nil
+	}
+}
+
+func detectImageURLType(url string) string {
+	u := strings.TrimSpace(strings.ToLower(url))
+	switch {
+	case strings.HasPrefix(u, "data:image/"):
+		return "data_url"
+	case strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://"):
+		return "http_url"
+	case u == "":
+		return "empty"
+	default:
+		return "other"
+	}
+}
+
+func truncateOpenRouterDebugString(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
+}
+
 func buildOpenRouterChatCompletionsURL(baseURL string) string {
 	base := strings.TrimSpace(baseURL)
 	if base == "" {
@@ -731,6 +935,7 @@ func streamOpenRouterChatToClaude(c *gin.Context, resp *http.Response, info *rel
 	modelName := info.UpstreamModelName
 	started := false
 	stopReason := "end_turn"
+	hasToolCall := false
 	nextBlockIndex := 0
 	openBlockIndexes := make([]int, 0, 8)
 	textBlockIndex := -1
@@ -739,6 +944,8 @@ func streamOpenRouterChatToClaude(c *gin.Context, resp *http.Response, info *rel
 	thinkingHasSignature := false
 	toolBlocks := make(map[int]*openRouterToolBlockState)
 	sawAnyChunk := false
+	unmarshalErrCount := 0
+	debugSamples := make([]string, 0, 8)
 
 	startMessage := func() error {
 		if started {
@@ -798,13 +1005,20 @@ func streamOpenRouterChatToClaude(c *gin.Context, resp *http.Response, info *rel
 				if writeErr := writeClaudeStreamEvent(c, "error", payload); writeErr != nil {
 					return nil, writeErr
 				}
-				stopReason = "end_turn"
-				break
+				common.LogWarn(c, fmt.Sprintf("openrouter stream error chunk | type=%s | message=%s", errType, errMsg))
+				return nil, errors.New("openrouter upstream stream error: " + errMsg)
 			}
 		}
 
 		var chunk dto.ChatCompletionsStreamResponse
-		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+		addOpenRouterDebugSample(&debugSamples, "raw", []byte(data))
+		normalizedData := normalizeOpenRouterStreamChunkData(data)
+		if !bytes.Equal([]byte(data), normalizedData) {
+			addOpenRouterDebugSample(&debugSamples, "normalized", normalizedData)
+		}
+		if err := json.Unmarshal(normalizedData, &chunk); err != nil {
+			unmarshalErrCount++
+			addOpenRouterDebugSample(&debugSamples, "unmarshal_err", []byte(err.Error()))
 			continue
 		}
 		if strings.TrimSpace(chunk.Id) != "" {
@@ -827,7 +1041,7 @@ func streamOpenRouterChatToClaude(c *gin.Context, resp *http.Response, info *rel
 		for _, choice := range chunk.Choices {
 			delta := choice.Delta
 
-			if reasoningText := extractReasoningFromDelta(&delta); strings.TrimSpace(reasoningText) != "" {
+			if reasoningText := stripOpenRouterVisibleControlTokens(extractReasoningFromDelta(&delta)); strings.TrimSpace(reasoningText) != "" {
 				if thinkingBlockIndex < 0 {
 					thinkingBlockIndex = nextBlockIndex
 					nextBlockIndex++
@@ -858,7 +1072,7 @@ func streamOpenRouterChatToClaude(c *gin.Context, resp *http.Response, info *rel
 				thinkingHasDelta = true
 			}
 
-			if content := delta.GetContentString(); content != "" {
+			if content := stripOpenRouterVisibleControlTokens(delta.GetContentString()); content != "" {
 				responseText.WriteString(content)
 				if textBlockIndex < 0 {
 					textBlockIndex = nextBlockIndex
@@ -890,6 +1104,7 @@ func streamOpenRouterChatToClaude(c *gin.Context, resp *http.Response, info *rel
 			}
 
 			if len(delta.ToolCalls) > 0 {
+				hasToolCall = true
 				for _, toolCall := range delta.ToolCalls {
 					toolCallIndex := 0
 					if toolCall.Index != nil {
@@ -969,6 +1184,31 @@ func streamOpenRouterChatToClaude(c *gin.Context, resp *http.Response, info *rel
 			return nil, err
 		}
 	}
+	if stopReason == "end_turn" && hasToolCall {
+		stopReason = "tool_use"
+	}
+	if responseText.Len() == 0 && !hasToolCall && !thinkingHasDelta {
+		common.LogWarn(c, fmt.Sprintf(
+			"openrouter stream empty output | model=%s | saw_any_chunk=%v | prompt_tokens=%d | completion_tokens=%d | unmarshal_errors=%d | samples=%s",
+			info.UpstreamModelName,
+			sawAnyChunk,
+			usage.PromptTokens,
+			usage.CompletionTokens,
+			unmarshalErrCount,
+			strings.Join(debugSamples, " || "),
+		))
+		errPayload := map[string]any{
+			"type": "error",
+			"error": map[string]any{
+				"type":    "api_error",
+				"message": "upstream returned empty stream response",
+			},
+		}
+		if err := writeClaudeStreamEvent(c, "error", errPayload); err != nil {
+			return nil, err
+		}
+		return nil, errors.New("openrouter upstream returned empty stream response")
+	}
 
 	if thinkingBlockIndex >= 0 && thinkingHasDelta && !thinkingHasSignature {
 		signaturePayload := map[string]any{
@@ -1030,6 +1270,181 @@ func streamOpenRouterChatToClaude(c *gin.Context, resp *http.Response, info *rel
 	return usage, nil
 }
 
+// OpenRouter 部分视觉/多模态模型会返回 delta.content 为数组或对象。
+// 这里先归一成字符串，避免严格结构体反序列化失败导致 chunk 被跳过。
+func normalizeOpenRouterStreamChunkData(data string) []byte {
+	raw := []byte(data)
+	var root map[string]any
+	if err := json.Unmarshal(raw, &root); err != nil {
+		return raw
+	}
+	choices, ok := root["choices"].([]any)
+	if !ok || len(choices) == 0 {
+		return raw
+	}
+	changed := false
+	for _, choiceRaw := range choices {
+		choice, ok := choiceRaw.(map[string]any)
+		if !ok {
+			continue
+		}
+		delta, ok := choice["delta"].(map[string]any)
+		if !ok {
+			continue
+		}
+		contentRaw, exists := delta["content"]
+		if exists {
+			if _, isString := contentRaw.(string); !isString {
+				contentText := strings.TrimSpace(extractOpenRouterChunkContentText(contentRaw))
+				if contentText == "" {
+					delete(delta, "content")
+				} else {
+					delta["content"] = contentText
+				}
+				changed = true
+			}
+		}
+
+		toolCallsRaw, hasToolCalls := delta["tool_calls"]
+		if !hasToolCalls {
+			continue
+		}
+		toolCalls, ok := toolCallsRaw.([]any)
+		if !ok {
+			continue
+		}
+		for _, tcRaw := range toolCalls {
+			tc, ok := tcRaw.(map[string]any)
+			if !ok {
+				continue
+			}
+			if id, ok := tc["id"]; ok {
+				if normalizedID, normalized := normalizeToolCallID(id); normalized {
+					tc["id"] = normalizedID
+					changed = true
+				}
+			}
+			if fn, ok := tc["function"].(map[string]any); ok {
+				if argsRaw, ok := fn["arguments"]; ok {
+					if argsStr, normalized := normalizeToolCallArguments(argsRaw); normalized {
+						fn["arguments"] = argsStr
+						changed = true
+					}
+				}
+			}
+		}
+	}
+	if !changed {
+		return raw
+	}
+	patched, err := json.Marshal(root)
+	if err != nil {
+		return raw
+	}
+	return patched
+}
+
+func normalizeToolCallID(v any) (string, bool) {
+	switch t := v.(type) {
+	case string:
+		return t, false
+	case float64:
+		return strconv.FormatInt(int64(t), 10), true
+	case float32:
+		return strconv.FormatInt(int64(t), 10), true
+	case int:
+		return strconv.Itoa(t), true
+	case int8:
+		return strconv.FormatInt(int64(t), 10), true
+	case int16:
+		return strconv.FormatInt(int64(t), 10), true
+	case int32:
+		return strconv.FormatInt(int64(t), 10), true
+	case int64:
+		return strconv.FormatInt(t, 10), true
+	case uint:
+		return strconv.FormatUint(uint64(t), 10), true
+	case uint8:
+		return strconv.FormatUint(uint64(t), 10), true
+	case uint16:
+		return strconv.FormatUint(uint64(t), 10), true
+	case uint32:
+		return strconv.FormatUint(uint64(t), 10), true
+	case uint64:
+		return strconv.FormatUint(t, 10), true
+	case json.Number:
+		return t.String(), true
+	default:
+		b, err := json.Marshal(t)
+		if err != nil {
+			return "", false
+		}
+		s := strings.Trim(string(b), "\"")
+		if strings.TrimSpace(s) == "" {
+			return "", false
+		}
+		return s, true
+	}
+}
+
+func normalizeToolCallArguments(v any) (string, bool) {
+	if s, ok := v.(string); ok {
+		return s, false
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "", false
+	}
+	return string(b), true
+}
+
+func extractOpenRouterChunkContentText(content any) string {
+	switch v := content.(type) {
+	case string:
+		return v
+	case []any:
+		var sb strings.Builder
+		for _, item := range v {
+			text := extractOpenRouterChunkContentText(item)
+			if strings.TrimSpace(text) != "" {
+				sb.WriteString(text)
+			}
+		}
+		return sb.String()
+	case map[string]any:
+		for _, key := range []string{"text", "content", "value", "output_text"} {
+			if s, ok := v[key].(string); ok && strings.TrimSpace(s) != "" {
+				return s
+			}
+		}
+		var sb strings.Builder
+		for _, sub := range v {
+			text := extractOpenRouterChunkContentText(sub)
+			if strings.TrimSpace(text) != "" {
+				sb.WriteString(text)
+			}
+		}
+		return sb.String()
+	default:
+		return ""
+	}
+}
+
+func addOpenRouterDebugSample(samples *[]string, label string, data []byte) {
+	if samples == nil {
+		return
+	}
+	if len(*samples) >= 8 {
+		return
+	}
+	s := strings.TrimSpace(string(data))
+	s = strings.ReplaceAll(s, "\n", " ")
+	if len(s) > 240 {
+		s = s[:240] + "..."
+	}
+	*samples = append(*samples, label+"="+s)
+}
+
 func parseOpenAIStreamError(errObj any) (string, string) {
 	errType := "api_error"
 	errMsg := "upstream error"
@@ -1041,12 +1456,68 @@ func parseOpenAIStreamError(errObj any) (string, string) {
 		if m, ok := v["message"].(string); ok && strings.TrimSpace(m) != "" {
 			errMsg = m
 		}
+		if nestedType, nestedMsg, ok := parseNestedProviderError(errMsg); ok {
+			if strings.TrimSpace(nestedType) != "" {
+				errType = mapOpenAIErrorTypeToClaude(nestedType)
+			}
+			if strings.TrimSpace(nestedMsg) != "" {
+				errMsg = nestedMsg
+			}
+		}
 	case string:
 		if strings.TrimSpace(v) != "" {
 			errMsg = v
 		}
+		if nestedType, nestedMsg, ok := parseNestedProviderError(errMsg); ok {
+			if strings.TrimSpace(nestedType) != "" {
+				errType = mapOpenAIErrorTypeToClaude(nestedType)
+			}
+			if strings.TrimSpace(nestedMsg) != "" {
+				errMsg = nestedMsg
+			}
+		}
 	}
 	return errType, errMsg
+}
+
+func parseNestedProviderError(raw string) (string, string, bool) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return "", "", false
+	}
+	if !strings.HasPrefix(s, "{") || !strings.HasSuffix(s, "}") {
+		return "", "", false
+	}
+	var nested map[string]any
+	if err := json.Unmarshal([]byte(s), &nested); err != nil {
+		return "", "", false
+	}
+	nestedType, _ := nested["type"].(string)
+	nestedMsg, _ := nested["message"].(string)
+	httpStatus := parseNumberToInt(nested["httpStatus"])
+
+	compactType := strings.TrimSpace(nestedType)
+	if idx := strings.LastIndex(compactType, "."); idx >= 0 && idx < len(compactType)-1 {
+		compactType = compactType[idx+1:]
+	}
+	finalMsg := strings.TrimSpace(nestedMsg)
+	if finalMsg != "" && compactType != "" && httpStatus > 0 {
+		finalMsg = fmt.Sprintf("%s (%d): %s", compactType, httpStatus, finalMsg)
+	} else if finalMsg != "" && compactType != "" {
+		finalMsg = fmt.Sprintf("%s: %s", compactType, finalMsg)
+	} else if finalMsg == "" {
+		if compactType != "" && httpStatus > 0 {
+			finalMsg = fmt.Sprintf("%s (%d)", compactType, httpStatus)
+		} else if compactType != "" {
+			finalMsg = compactType
+		} else if httpStatus > 0 {
+			finalMsg = fmt.Sprintf("httpStatus=%d", httpStatus)
+		}
+	}
+	if strings.TrimSpace(finalMsg) == "" && strings.TrimSpace(nestedType) == "" {
+		return "", "", false
+	}
+	return strings.TrimSpace(nestedType), strings.TrimSpace(finalMsg), true
 }
 
 func writeClaudeStreamEvent(c *gin.Context, event string, payload any) error {
@@ -1132,7 +1603,7 @@ func nonStreamOpenRouterChatToClaude(c *gin.Context, resp *http.Response, info *
 	contentBlocks := make([]map[string]any, 0, 4)
 	rawThinkingText, rawThinkingSignature := extractThinkingFromOpenAIResponseRaw(body)
 
-	textContent := strings.TrimSpace(choice.Message.StringContent())
+	textContent := strings.TrimSpace(stripOpenRouterVisibleControlTokens(choice.Message.StringContent()))
 	if textContent == "" {
 		parsedContent := choice.Message.ParseContent()
 		var sb strings.Builder
@@ -1141,7 +1612,7 @@ func nonStreamOpenRouterChatToClaude(c *gin.Context, resp *http.Response, info *
 				sb.WriteString(content.Text)
 			}
 		}
-		textContent = strings.TrimSpace(sb.String())
+		textContent = strings.TrimSpace(stripOpenRouterVisibleControlTokens(sb.String()))
 	}
 	if textContent != "" {
 		contentBlocks = append(contentBlocks, map[string]any{
@@ -1150,7 +1621,9 @@ func nonStreamOpenRouterChatToClaude(c *gin.Context, resp *http.Response, info *
 		})
 	}
 
-	if thinkingText := extractReasoningFromMessage(&choice.Message); thinkingText != "" || rawThinkingText != "" {
+	thinkingText := stripOpenRouterVisibleControlTokens(extractReasoningFromMessage(&choice.Message))
+	rawThinkingText = stripOpenRouterVisibleControlTokens(rawThinkingText)
+	if thinkingText != "" || rawThinkingText != "" {
 		if thinkingText == "" {
 			thinkingText = rawThinkingText
 		}
@@ -1288,4 +1761,11 @@ func mapOpenAIFinishReasonToClaude(reason string) string {
 	default:
 		return "end_turn"
 	}
+}
+
+func stripOpenRouterVisibleControlTokens(s string) string {
+	if s == "" {
+		return ""
+	}
+	return openRouterVisibleControlTokenReplacer.Replace(s)
 }

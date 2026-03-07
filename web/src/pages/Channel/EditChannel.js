@@ -235,6 +235,11 @@ const EditChannel = (props) => {
       });
       return;
     }
+    if (name === 'setting') {
+      const normalized = typeof value === 'string' ? value : '';
+      setInputs((inputs) => ({ ...inputs, [name]: normalized }));
+      return;
+    }
     setInputs((inputs) => ({ ...inputs, [name]: value }));
     //setAutoBan
   };
@@ -807,6 +812,11 @@ const EditChannel = (props) => {
       return;
     }
     let localInputs = { ...inputs };
+    if (typeof localInputs.setting === 'string') {
+      localInputs.setting = localInputs.setting.trim();
+    } else {
+      localInputs.setting = '';
+    }
     if (localInputs.base_url && localInputs.base_url.endsWith('/')) {
       localInputs.base_url = localInputs.base_url.slice(
         0,
@@ -1679,7 +1689,7 @@ const EditChannel = (props) => {
             value={inputs.proxy_url}
             autoComplete="new-password"
           />
-          {(inputs.type === 8 || inputs.type === 45) && (
+          {(inputs.type === 8 || inputs.type === 20 || inputs.type === 45) && (
           <>
             <div style={{ marginTop: 10 }}>
               <Typography.Text strong>
@@ -1708,7 +1718,9 @@ const EditChannel = (props) => {
                   JSON.stringify(
                     inputs.type === 45
                       ? { chatgpt_account_id: 'your_account_id' }
-                      : { force_format: true },
+                      : inputs.type === 20
+                        ? { provider: { order: ['Z.AI'], allow_fallbacks: false } }
+                        : { force_format: true },
                     null,
                     2
                   )
