@@ -55,9 +55,13 @@ func OpenAIErrorWrapper(err error, code string, statusCode int) *dto.OpenAIError
 		Type:    "new_api_error",
 		Code:    code,
 	}
+	// 计费前的 token 预处理错误（如图片 URL 下载失败）发生在请求上游之前，
+	// 不应触发重试/自动禁用渠道。
+	isPreprocessError := strings.HasPrefix(code, "count_token")
 	return &dto.OpenAIErrorWithStatusCode{
 		Error:      openAIError,
 		StatusCode: statusCode,
+		LocalError: isPreprocessError,
 	}
 }
 
