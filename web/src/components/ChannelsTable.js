@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   API,
+  getUserIdFromLocalStorage,
   isMobile,
   shouldShowPrompt,
   showError,
@@ -43,6 +44,43 @@ function renderTimestamp(timestamp) {
 
 let type2label = undefined;
 
+const CHANNEL_FILTERS_STORAGE_KEY = 'channels-filters-v1';
+
+const getChannelFiltersStorageKey = () => {
+  const userId = getUserIdFromLocalStorage();
+  if (userId > 0) {
+    return `${CHANNEL_FILTERS_STORAGE_KEY}-${userId}`;
+  }
+  return CHANNEL_FILTERS_STORAGE_KEY;
+};
+
+const getDefaultChannelFilters = () => ({
+  searchKeyword: '',
+  searchType: '',
+  searchGroup: '',
+  searchModel: ''
+});
+
+const getInitialChannelFilters = () => {
+  const defaultFilters = getDefaultChannelFilters();
+  if (typeof window === 'undefined') {
+    return defaultFilters;
+  }
+  try {
+    const storedFilters = localStorage.getItem(getChannelFiltersStorageKey());
+    if (!storedFilters) {
+      return defaultFilters;
+    }
+    const parsedFilters = JSON.parse(storedFilters);
+    return {
+      ...defaultFilters,
+      ...parsedFilters
+    };
+  } catch {
+    return defaultFilters;
+  }
+};
+
 function renderType(type) {
   if (!type2label) {
     type2label = new Map();
@@ -73,6 +111,7 @@ function renderTagType(type) {
 }
 
 const ChannelsTable = () => {
+  const initialFilters = getInitialChannelFilters();
   const columns = [
     // {
     //     title: '',
@@ -374,10 +413,10 @@ const ChannelsTable = () => {
   const [loading, setLoading] = useState(true);
   const [activePage, setActivePage] = useState(1);
   const [idSort, setIdSort] = useState(false);
-  const [searchKeyword, setSearchKeyword] = useState('');
-  const [searchType, setSearchType] = useState('');
-  const [searchGroup, setSearchGroup] = useState('');
-  const [searchModel, setSearchModel] = useState('');
+  const [searchKeyword, setSearchKeyword] = useState(initialFilters.searchKeyword);
+  const [searchType, setSearchType] = useState(initialFilters.searchType);
+  const [searchGroup, setSearchGroup] = useState(initialFilters.searchGroup);
+  const [searchModel, setSearchModel] = useState(initialFilters.searchModel);
   const [searching, setSearching] = useState(false);
   const [updatingBalance, setUpdatingBalance] = useState(false);
   const [pageSize, setPageSize] = useState(ITEMS_PER_PAGE);
@@ -590,16 +629,54 @@ const ChannelsTable = () => {
     const localIdSort = localStorage.getItem('id-sort') === 'true';
     const localPageSize =
       parseInt(localStorage.getItem('page-size')) || ITEMS_PER_PAGE;
+    const restoredFilters = getInitialChannelFilters();
     setIdSort(localIdSort);
     setPageSize(localPageSize);
-    loadChannels(0, localPageSize, localIdSort, enableTagMode, searchType, searchGroup)
-      .then()
-      .catch((reason) => {
-        showError(reason);
-      });
+    if (restoredFilters.searchKeyword !== '' || restoredFilters.searchModel !== '') {
+      searchChannels(
+        restoredFilters.searchKeyword,
+        restoredFilters.searchType,
+        restoredFilters.searchGroup,
+        restoredFilters.searchModel,
+        enableTagMode
+      )
+        .then()
+        .catch((reason) => {
+          showError(reason);
+        });
+    } else {
+      loadChannels(
+        0,
+        localPageSize,
+        localIdSort,
+        enableTagMode,
+        restoredFilters.searchType,
+        restoredFilters.searchGroup
+      )
+        .then()
+        .catch((reason) => {
+          showError(reason);
+        });
+    }
     fetchGroups().then();
     loadChannelModels().then();
   }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        getChannelFiltersStorageKey(),
+        JSON.stringify({
+          searchKeyword,
+          searchType,
+          searchGroup,
+          searchModel
+        })
+      );
+    } catch {
+      // ignore
+    }
+  }, [searchKeyword, searchType, searchGroup, searchModel]);
 
   const manageChannel = async (id, action, record, value) => {
     let data = { id };
