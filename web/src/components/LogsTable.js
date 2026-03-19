@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   API,
   copy,
+  getUserIdFromLocalStorage,
   getTodayStartTimestamp,
   isAdmin,
   showError,
@@ -61,6 +62,49 @@ const colors = [
   'violet',
   'yellow',
 ];
+
+const LOG_FILTERS_STORAGE_KEY = 'logs-filters-v1';
+
+const getLogFiltersStorageKey = () => {
+  const userId = getUserIdFromLocalStorage();
+  if (userId > 0) {
+    return `${LOG_FILTERS_STORAGE_KEY}-${userId}`;
+  }
+  return LOG_FILTERS_STORAGE_KEY;
+};
+
+const getDefaultInputs = () => {
+  const now = new Date();
+  return {
+    username: '',
+    token_name: '',
+    model_name: '',
+    group: '',
+    start_timestamp: timestamp2string(getTodayStartTimestamp()),
+    end_timestamp: timestamp2string(now.getTime() / 1000 + 3600),
+    channel: '',
+  };
+};
+
+const getInitialInputs = () => {
+  const defaultInputs = getDefaultInputs();
+  if (typeof window === 'undefined') {
+    return defaultInputs;
+  }
+  try {
+    const storedInputs = localStorage.getItem(getLogFiltersStorageKey());
+    if (!storedInputs) {
+      return defaultInputs;
+    }
+    const parsedInputs = JSON.parse(storedInputs);
+    return {
+      ...defaultInputs,
+      ...parsedInputs,
+    };
+  } catch {
+    return defaultInputs;
+  }
+};
 
 function renderType(type) {
   switch (type) {
@@ -401,17 +445,7 @@ const LogsTable = () => {
   const [pageSize, setPageSize] = useState(ITEMS_PER_PAGE);
   const [logType, setLogType] = useState(0);
   const isAdminUser = isAdmin();
-  let now = new Date();
-  // 初始化start_timestamp为今天0点
-  const [inputs, setInputs] = useState({
-    username: '',
-    token_name: '',
-    model_name: '',
-    group: '',
-    start_timestamp: timestamp2string(getTodayStartTimestamp()),
-    end_timestamp: timestamp2string(now.getTime() / 1000 + 3600),
-    channel: '',
-  });
+  const [inputs, setInputs] = useState(() => getInitialInputs());
   const {
     username,
     token_name,
@@ -682,6 +716,14 @@ const LogsTable = () => {
       });
     handleEyeClick();
   }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(getLogFiltersStorageKey(), JSON.stringify(inputs));
+    } catch {
+      // ignore
+    }
+  }, [inputs]);
 
   const expandRowRender = (record, index) => {
     return <Descriptions data={expandData[record.key]} />;
