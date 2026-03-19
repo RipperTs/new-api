@@ -64,6 +64,13 @@ const colors = [
 ];
 
 const LOG_FILTERS_STORAGE_KEY = 'logs-filters-v1';
+const LOG_PERSISTED_FILTER_KEYS = [
+  'username',
+  'token_name',
+  'model_name',
+  'group',
+  'channel',
+];
 
 const getLogFiltersStorageKey = () => {
   const userId = getUserIdFromLocalStorage();
@@ -86,6 +93,16 @@ const getDefaultInputs = () => {
   };
 };
 
+const pickPersistedLogFilters = (source) => {
+  const persistedFilters = {};
+  LOG_PERSISTED_FILTER_KEYS.forEach((key) => {
+    if (Object.prototype.hasOwnProperty.call(source, key)) {
+      persistedFilters[key] = source[key];
+    }
+  });
+  return persistedFilters;
+};
+
 const getInitialInputs = () => {
   const defaultInputs = getDefaultInputs();
   if (typeof window === 'undefined') {
@@ -99,7 +116,7 @@ const getInitialInputs = () => {
     const parsedInputs = JSON.parse(storedInputs);
     return {
       ...defaultInputs,
-      ...parsedInputs,
+      ...pickPersistedLogFilters(parsedInputs),
     };
   } catch {
     return defaultInputs;
@@ -719,7 +736,10 @@ const LogsTable = () => {
 
   useEffect(() => {
     try {
-      localStorage.setItem(getLogFiltersStorageKey(), JSON.stringify(inputs));
+      localStorage.setItem(
+        getLogFiltersStorageKey(),
+        JSON.stringify(pickPersistedLogFilters(inputs)),
+      );
     } catch {
       // ignore
     }

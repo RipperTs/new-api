@@ -632,6 +632,10 @@ const ChannelsTable = () => {
     const restoredFilters = getInitialChannelFilters();
     setIdSort(localIdSort);
     setPageSize(localPageSize);
+    setSearchKeyword(restoredFilters.searchKeyword || '');
+    setSearchModel(restoredFilters.searchModel || '');
+    setSearchType(restoredFilters.searchType ?? '');
+    setSearchGroup(restoredFilters.searchGroup ?? '');
     if (restoredFilters.searchKeyword !== '' || restoredFilters.searchModel !== '') {
       searchChannels(
         restoredFilters.searchKeyword,
