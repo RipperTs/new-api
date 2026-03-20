@@ -441,8 +441,10 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Split(bufio.ScanLines)
 
-	// 检测是否为测试请求（如果不需要设置流式响应头，说明是测试）
-	isTestRequest := c.Request.URL.Path == "/api/channel/test" || strings.Contains(c.Request.URL.Path, "/channel/test/")
+	// 优先使用显式上下文标记识别测试请求，避免中间流程改写 URL 导致误判。
+	isTestRequest := c.GetBool("is_channel_test") ||
+		c.Request.URL.Path == "/api/channel/test" ||
+		strings.Contains(c.Request.URL.Path, "/channel/test/")
 	streamStarted := false
 
 	if isTestRequest {

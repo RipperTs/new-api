@@ -32,6 +32,33 @@ func buildFixedClaudeCodeSystem() []claudecode.ClaudeContent {
 	return buildFixedClaudeCodeSystemWithCacheSlots(2)
 }
 
+// BuildClaudeCodeNativeTestRequest 构造 Claude Code 原生 /v1/messages 测试请求体。
+// 仅用于管理端通道测试，避免 OpenAI 兼容转换造成上游风控误判。
+func BuildClaudeCodeNativeTestRequest(model string, stream bool) map[string]any {
+	m := strings.TrimSpace(model)
+	if m == "" {
+		m = "claude-sonnet-4-20250514"
+	}
+	return map[string]any{
+		"model":      m,
+		"stream":     stream,
+		"max_tokens": 10,
+		"system":     buildFixedClaudeCodeSystem(),
+		"messages": []map[string]any{
+			{
+				"role": "user",
+				"content": []map[string]any{
+					{
+						"type": "text",
+						"text": "hi",
+					},
+				},
+			},
+		},
+		"tools": []any{},
+	}
+}
+
 func buildFixedClaudeCodeSystemWithCacheSlots(cacheSlots int) []claudecode.ClaudeContent {
 	if cacheSlots < 0 {
 		cacheSlots = 0

@@ -67,8 +67,11 @@ func testChannel(channel *model.Channel, testModel string) (err error, openAIErr
 		}
 	}
 
-	// 判断是否为 Embedding 模型
-	if isEmbeddingModel(testModel) {
+	// Claude Code 测试走原生 /v1/messages，尽量对齐线上真实请求体
+	if channel.Type == common.ChannelTypeClaudeCode {
+		requestPath = "/v1/messages"
+	} else if isEmbeddingModel(testModel) {
+		// 判断是否为 Embedding 模型
 		requestPath = "/v1/embeddings"
 	}
 
@@ -96,6 +99,10 @@ func testChannel(channel *model.Channel, testModel string) (err error, openAIErr
 
 	c.Request.Header.Set("Authorization", "Bearer "+channel.Key)
 	c.Request.Header.Set("Content-Type", "application/json")
+	if channel.Type == common.ChannelTypeClaudeCode {
+		c.Request.Header.Set("Accept", "application/json")
+	}
+	c.Set("is_channel_test", true)
 	c.Set("channel", channel.Type)
 	c.Set("base_url", channel.GetBaseURL())
 	c.Set("proxy_url", channel.GetProxyURL())
@@ -109,15 +116,22 @@ func testChannel(channel *model.Channel, testModel string) (err error, openAIErr
 		return fmt.Errorf("invalid api type: %d, adaptor is nil", apiType), nil
 	}
 
-	request := buildTestRequest(testModel)
 	meta.UpstreamModelName = testModel
 	common.SysLog(fmt.Sprintf("testing channel %d with model %s", channel.Id, testModel))
 
 	adaptor.Init(meta)
 
-	convertedRequest, err := adaptor.ConvertRequest(c, meta, request)
-	if err != nil {
-		return err, nil
+	var convertedRequest any
+	if channel.Type == common.ChannelTypeClaudeCode {
+		// 仅 Claude Code 测试使用原生 /v1/messages 请求体（非流式），
+		// 避免 OpenAI 兼容转换导致上游风控判定为非官方客户端。
+		convertedRequest = relay.BuildClaudeCodeNativeTestRequest(testModel, false)
+	} else {
+		request := buildTestRequest(testModel)
+		convertedRequest, err = adaptor.ConvertRequest(c, meta, request)
+		if err != nil {
+			return err, nil
+		}
 	}
 	if u, err := adaptor.GetRequestURL(meta); err == nil {
 		common.SysLog(fmt.Sprintf("testing channel %d upstream url: %s", channel.Id, u))
