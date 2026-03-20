@@ -87,7 +87,7 @@ func StartChannelScheduler() {
 		return
 	}
 
-	common.SysLog("启动渠道检查定时任务，每30分钟执行一次")
+	common.SysLog("启动渠道检查定时任务，每10分钟执行一次")
 
 	go func() {
 		// 启动后延迟5分钟再开始第一次检查，避免系统启动时的干扰
@@ -104,8 +104,8 @@ func StartChannelScheduler() {
 				common.SysLog("自动启用渠道功能已关闭，跳过本次检查")
 			}
 
-			// 每30分钟执行一次
-			time.Sleep(30 * time.Minute)
+			// 每10分钟执行一次
+			time.Sleep(10 * time.Minute)
 		}
 	}()
 }
