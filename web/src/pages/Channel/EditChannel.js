@@ -326,6 +326,20 @@ const EditChannel = (props) => {
     const s = getClaudeSetting();
     return s.claude_oauth_session_id || '';
   };
+  const getClaudeUseAnthropicBeta = () => {
+    const s = getClaudeSetting();
+    if (typeof s.use_anthropic_beta === 'boolean') {
+      return s.use_anthropic_beta;
+    }
+    return true;
+  };
+  const applyClaudeUseAnthropicBeta = (enabled) => {
+    setInputs((prev) => {
+      const s = safeParseJSON(prev.setting);
+      const next = { ...s, use_anthropic_beta: !!enabled };
+      return { ...prev, setting: JSON.stringify(next, null, 2) };
+    });
+  };
   const applyClaudeAuthMode = (mode) => {
     setInputs((prev) => {
       const s = safeParseJSON(prev.setting);
@@ -1015,6 +1029,17 @@ const EditChannel = (props) => {
                       applyClaudeAuthMode(v);
                     }}
                   />
+                  <div style={{ marginTop: 10, display: 'flex' }}>
+                    <Space>
+                      <Checkbox
+                        checked={getClaudeUseAnthropicBeta()}
+                        onChange={() => {
+                          applyClaudeUseAnthropicBeta(!getClaudeUseAnthropicBeta());
+                        }}
+                      />
+                      <Typography.Text strong>使用 anthropic-beta 请求头</Typography.Text>
+                    </Space>
+                  </div>
                   {getClaudeAuthMode() === 'oauth' && (
                     <div style={{ marginTop: 10 }}>
                       <Banner

@@ -26,6 +26,34 @@ type Adaptor struct {
 	RequestMode int
 }
 
+func shouldUseAnthropicBeta(setting map[string]interface{}) bool {
+	if setting == nil {
+		return true
+	}
+	raw, ok := setting["use_anthropic_beta"]
+	if !ok {
+		return true
+	}
+	switch v := raw.(type) {
+	case bool:
+		return v
+	case string:
+		s := strings.ToLower(strings.TrimSpace(v))
+		switch s {
+		case "", "true", "1", "yes", "on":
+			return true
+		case "false", "0", "no", "off":
+			return false
+		default:
+			return true
+		}
+	case float64:
+		return v != 0
+	default:
+		return true
+	}
+}
+
 func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.AudioRequest) (io.Reader, error) {
 	//TODO implement me
 	return nil, errors.New("not implemented")
@@ -80,15 +108,19 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 	// interleaved-thinking 会引入 thinking signature 校验。
 	// OpenAI 兼容模式下我们无法可靠透传 thinking block/signature，因此默认禁用；
 	// 仅在 Claude /v1/messages 原生请求时开启，保持与 Claude Code CLI 行为一致。
-	clientBeta := strings.TrimSpace(c.GetHeader("anthropic-beta"))
-	if c.GetBool("claude_is_official_cli") && clientBeta != "" {
-		req.Set("anthropic-beta", clientBeta)
-	} else {
-		beta := "claude-code-20250219,oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14"
-		if !c.GetBool("claude_disable_interleaved_thinking") && info != nil && info.RelayMode == relayconstant.RelayModeClaudeMessages {
-			beta = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14"
+	if shouldUseAnthropicBeta(info.ChannelSetting) {
+		clientBeta := strings.TrimSpace(c.GetHeader("anthropic-beta"))
+		if c.GetBool("claude_is_official_cli") && clientBeta != "" {
+			req.Set("anthropic-beta", clientBeta)
+		} else {
+			beta := "claude-code-20250219,oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14"
+			if !c.GetBool("claude_disable_interleaved_thinking") && info != nil && info.RelayMode == relayconstant.RelayModeClaudeMessages {
+				beta = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14"
+			}
+			req.Set("anthropic-beta", beta)
 		}
-		req.Set("anthropic-beta", beta)
+	} else {
+		req.Del("anthropic-beta")
 	}
 	req.Set("X-Stainless-Runtime-Version", "v20.18.1")
 	req.Set("anthropic-dangerous-direct-browser-access", "true")
