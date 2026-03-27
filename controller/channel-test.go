@@ -70,6 +70,12 @@ func testChannel(channel *model.Channel, testModel string) (err error, openAIErr
 	// Claude Code 测试走原生 /v1/messages，尽量对齐线上真实请求体
 	if channel.Type == common.ChannelTypeClaudeCode {
 		requestPath = "/v1/messages"
+	} else if isRerankModel(testModel) {
+		// rerank 模型优先走 /v1/rerank
+		requestPath = "/v1/rerank"
+	} else if channel.Type == common.ChannelTypeJina {
+		// Jina 不支持 chat/completions，默认走 embeddings（除 rerank 外）
+		requestPath = "/v1/embeddings"
 	} else if isEmbeddingModel(testModel) {
 		// 判断是否为 Embedding 模型
 		requestPath = "/v1/embeddings"
@@ -126,8 +132,17 @@ func testChannel(channel *model.Channel, testModel string) (err error, openAIErr
 		// 仅 Claude Code 测试使用原生 /v1/messages 请求体（非流式），
 		// 避免 OpenAI 兼容转换导致上游风控判定为非官方客户端。
 		convertedRequest = relay.BuildClaudeCodeNativeTestRequest(testModel, false)
+	} else if requestPath == "/v1/rerank" {
+		rerankRequest := buildTestRerankRequest(testModel)
+		convertedRequest, err = adaptor.ConvertRerankRequest(c, meta.RelayMode, *rerankRequest)
+		if err != nil {
+			return err, nil
+		}
 	} else {
 		request := buildTestRequest(testModel)
+		if requestPath == "/v1/embeddings" {
+			request = buildTestEmbeddingRequest(testModel)
+		}
 		convertedRequest, err = adaptor.ConvertRequest(c, meta, request)
 		if err != nil {
 			return err, nil
@@ -276,6 +291,28 @@ func isEmbeddingModel(model string) bool {
 		strings.Contains(model, "embedding")
 }
 
+func isRerankModel(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	return strings.Contains(model, "rerank") || strings.Contains(model, "reranker")
+}
+
+func buildTestEmbeddingRequest(model string) *dto.GeneralOpenAIRequest {
+	return &dto.GeneralOpenAIRequest{
+		Model:  model,
+		Stream: false,
+		Input:  []any{"hello world"},
+	}
+}
+
+func buildTestRerankRequest(model string) *dto.RerankRequest {
+	return &dto.RerankRequest{
+		Model:     model,
+		Query:     "hello world",
+		Documents: []any{"hello world", "hi world"},
+		TopN:      1,
+	}
+}
+
 func buildTestRequest(model string) *dto.GeneralOpenAIRequest {
 	testRequest := &dto.GeneralOpenAIRequest{
 		Model:  "", // this will be set later
@@ -283,9 +320,7 @@ func buildTestRequest(model string) *dto.GeneralOpenAIRequest {
 	}
 	// 先判断是否为 Embedding 模型
 	if isEmbeddingModel(model) {
-		testRequest.Model = model
-		testRequest.Input = []any{"hello world"}
-		return testRequest
+		return buildTestEmbeddingRequest(model)
 	}
 	// 判断需要特殊处理的模型
 	if strings.HasPrefix(model, "o") || strings.HasPrefix(model, "gpt-5") {
