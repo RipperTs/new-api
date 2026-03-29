@@ -16,6 +16,7 @@ import (
 	"one-api/service"
 	"one-api/setting"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -30,6 +31,34 @@ var claudeCLIUserAgentRegex = regexp.MustCompile(`(?i)^claude-cli\/[\d.]+(?:[-\w
 
 func buildFixedClaudeCodeSystem() []claudecode.ClaudeContent {
 	return buildFixedClaudeCodeSystemWithCacheSlots(2)
+}
+
+func marshalClaudeRequestBodyWithModelFirst(bodyMap map[string]json.RawMessage, model string) ([]byte, error) {
+	if bodyMap == nil {
+		return nil, fmt.Errorf("bodyMap is nil")
+	}
+
+	keys := make([]string, 0, len(bodyMap))
+	for key, raw := range bodyMap {
+		if key == "model" || len(raw) == 0 {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	buf.WriteString(`"model":`)
+	buf.WriteString(strconv.Quote(model))
+	for _, key := range keys {
+		buf.WriteByte(',')
+		buf.WriteString(strconv.Quote(key))
+		buf.WriteByte(':')
+		buf.Write(bodyMap[key])
+	}
+	buf.WriteByte('}')
+	return buf.Bytes(), nil
 }
 
 // BuildClaudeCodeNativeTestRequest 构造 Claude Code 原生 /v1/messages 测试请求体。
@@ -506,7 +535,7 @@ func ClaudeCodeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithSta
 		} else if shouldPatchSystem {
 			bodyMap["system"] = patchedSystemRaw
 		}
-		if patched, marshalErr := json.Marshal(bodyMap); marshalErr == nil {
+		if patched, marshalErr := marshalClaudeRequestBodyWithModelFirst(bodyMap, claudeReq.Model); marshalErr == nil {
 			jsonData = patched
 		}
 	}
