@@ -8,11 +8,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"io"
 	"net/http"
+	basecommon "one-api/common"
 	"one-api/dto"
 	"one-api/relay/channel"
 	relaycommon "one-api/relay/common"
 	relayconstant "one-api/relay/constant"
 	"one-api/service"
+	"os"
 	"strings"
 	"time"
 )
@@ -24,6 +26,26 @@ const (
 
 type Adaptor struct {
 	RequestMode int
+}
+
+type claudeCodeUpstreamDebugPayload struct {
+	Event      string      `json:"event"`
+	LoggedAt   string      `json:"logged_at"`
+	ChannelID  int         `json:"channel_id"`
+	Attempt    int         `json:"attempt"`
+	RequestURL string      `json:"request_url"`
+	Method     string      `json:"method"`
+	Headers    http.Header `json:"headers"`
+	Body       any         `json:"body"`
+}
+
+func isClaudeMessagesDebugEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("CLAUDE_MESSAGES_DEBUG"))) {
+	case "true", "1", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func shouldUseAnthropicBeta(setting map[string]interface{}) bool {
@@ -230,6 +252,40 @@ func ensureMetadataUserID(body []byte, apiKey string) []byte {
 	return patched
 }
 
+func buildClaudeCodeDebugBody(bodyBytes []byte) any {
+	if len(bodyBytes) == 0 {
+		return ""
+	}
+	if json.Valid(bodyBytes) {
+		return json.RawMessage(bodyBytes)
+	}
+	return string(bodyBytes)
+}
+
+func logClaudeCodeUpstreamRequest(req *http.Request, info *relaycommon.RelayInfo, bodyBytes []byte, attempt int) {
+	if req == nil || !isClaudeMessagesDebugEnabled() {
+		return
+	}
+	payload := claudeCodeUpstreamDebugPayload{
+		Event:      "claude_code_upstream_request",
+		LoggedAt:   time.Now().Format(time.RFC3339Nano),
+		Attempt:    attempt,
+		RequestURL: req.URL.String(),
+		Method:     req.Method,
+		Headers:    req.Header,
+		Body:       buildClaudeCodeDebugBody(bodyBytes),
+	}
+	if info != nil {
+		payload.ChannelID = info.ChannelId
+	}
+	logBytes, err := json.Marshal(payload)
+	if err != nil {
+		basecommon.SysError("marshal claude code upstream debug payload failed: " + err.Error())
+		return
+	}
+	_, _ = fmt.Fprintln(gin.DefaultWriter, string(logBytes))
+}
+
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
 	// 读取请求体，便于重试时重复发送（Claude Code 偶发返回 thinking signature 相关 400）。
 	bodyBytes, err := io.ReadAll(requestBody)
@@ -241,8 +297,15 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 		bodyBytes = ensureMetadataUserID(bodyBytes, info.ApiKey)
 	}
 
+	attempt := 0
 	doOnce := func() (*http.Response, error) {
-		return channel.DoApiRequest(a, c, info, bytes.NewReader(bodyBytes))
+		attempt++
+		req, err := channel.BuildAPIRequest(a, c, info, bytes.NewReader(bodyBytes))
+		if err != nil {
+			return nil, err
+		}
+		logClaudeCodeUpstreamRequest(req, info, bodyBytes, attempt)
+		return channel.DoPreparedRequest(c, req, info)
 	}
 
 	resp, err := doOnce()
@@ -265,7 +328,13 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 				if info != nil && info.RelayMode == relayconstant.RelayModeClaudeMessages {
 					retryBody = stripThinkingBlocks(bodyBytes)
 				}
-				resp2, err2 := channel.DoApiRequest(a, c, info, bytes.NewReader(retryBody))
+				attempt++
+				req, buildErr := channel.BuildAPIRequest(a, c, info, bytes.NewReader(retryBody))
+				if buildErr != nil {
+					return resp, nil
+				}
+				logClaudeCodeUpstreamRequest(req, info, retryBody, attempt)
+				resp2, err2 := channel.DoPreparedRequest(c, req, info)
 				if err2 == nil && resp2 != nil {
 					return resp2, nil
 				}

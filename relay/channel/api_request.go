@@ -86,6 +86,18 @@ func newWssDialerWithProxy(proxyURL string) *websocket.Dialer {
 }
 
 func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
+	req, err := BuildAPIRequest(a, c, info, requestBody)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := DoPreparedRequest(c, req, info)
+	if err != nil {
+		return nil, fmt.Errorf("do request failed: %w", err)
+	}
+	return resp, nil
+}
+
+func BuildAPIRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Request, error) {
 	fullRequestURL, err := a.GetRequestURL(info)
 	if err != nil {
 		return nil, fmt.Errorf("get request url failed: %w", err)
@@ -99,11 +111,7 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 	if err != nil {
 		return nil, fmt.Errorf("setup request header failed: %w", err)
 	}
-	resp, err := doRequest(c, req, info)
-	if err != nil {
-		return nil, fmt.Errorf("do request failed: %w", err)
-	}
-	return resp, nil
+	return req, nil
 }
 
 func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
@@ -200,6 +208,10 @@ func doRequest(c *gin.Context, req *http.Request, info interface{}) (*http.Respo
 	_ = req.Body.Close()
 	_ = c.Request.Body.Close()
 	return resp, nil
+}
+
+func DoPreparedRequest(c *gin.Context, req *http.Request, info interface{}) (*http.Response, error) {
+	return doRequest(c, req, info)
 }
 
 func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.TaskRelayInfo, requestBody io.Reader) (*http.Response, error) {

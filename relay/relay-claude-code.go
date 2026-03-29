@@ -115,6 +115,86 @@ func hasBillingHeaderInSystem(system []claudecode.ClaudeContent) bool {
 	return false
 }
 
+func isClaudeBillingHeaderSystemText(text string) bool {
+	return strings.HasPrefix(strings.TrimSpace(text), "x-anthropic-billing-header:")
+}
+
+func filterClaudeBillingHeaderSystem(system []claudecode.ClaudeContent) []claudecode.ClaudeContent {
+	if len(system) == 0 {
+		return nil
+	}
+	filtered := make([]claudecode.ClaudeContent, 0, len(system))
+	for _, item := range system {
+		if isClaudeBillingHeaderSystemText(item.Text) {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return filtered
+}
+
+func isClaudeBillingHeaderSystemRawItem(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return false
+	}
+	switch trimmed[0] {
+	case '"':
+		var text string
+		if err := json.Unmarshal(trimmed, &text); err != nil {
+			return false
+		}
+		return isClaudeBillingHeaderSystemText(text)
+	case '{':
+		var item map[string]any
+		if err := json.Unmarshal(trimmed, &item); err != nil {
+			return false
+		}
+		text, _ := item["text"].(string)
+		return isClaudeBillingHeaderSystemText(text)
+	default:
+		return false
+	}
+}
+
+func filterClaudeBillingHeaderSystemRaw(systemRaw json.RawMessage) (patched json.RawMessage, shouldPatch bool, shouldDelete bool) {
+	trimmed := bytes.TrimSpace(systemRaw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return nil, false, false
+	}
+	wasArray := trimmed[0] == '['
+	items, err := normalizeSystemRawToList(systemRaw)
+	if err != nil {
+		return nil, false, false
+	}
+	filtered := make([]json.RawMessage, 0, len(items))
+	changed := false
+	for _, item := range items {
+		if isClaudeBillingHeaderSystemRawItem(item) {
+			changed = true
+			continue
+		}
+		filtered = append(filtered, append(json.RawMessage(nil), item...))
+	}
+	if !changed {
+		return nil, false, false
+	}
+	if len(filtered) == 0 {
+		return nil, false, true
+	}
+	if !wasArray && len(filtered) == 1 {
+		return filtered[0], true, false
+	}
+	patched, err = json.Marshal(filtered)
+	if err != nil {
+		return nil, false, false
+	}
+	return patched, true, false
+}
+
 func normalizeSystemRawToList(systemRaw json.RawMessage) ([]json.RawMessage, error) {
 	trimmed := bytes.TrimSpace(systemRaw)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
@@ -213,50 +293,67 @@ func isOfficialClaudeCLIRequest(c *gin.Context, systemRaw json.RawMessage, parse
 	return score >= 2
 }
 
-func applyClaudeCodeSystemRules(c *gin.Context, claudeReq *claudecode.ClaudeRequest, bodyMap map[string]json.RawMessage) (patchedSystemRaw json.RawMessage, shouldPatchSystem bool) {
+func applyClaudeCodeSystemRules(c *gin.Context, claudeReq *claudecode.ClaudeRequest, bodyMap map[string]json.RawMessage) (patchedSystemRaw json.RawMessage, shouldPatchSystem bool, shouldDeleteSystem bool) {
 	cacheSlots := 2
 	if bodyMap != nil {
 		cacheSlots = 4 - countCacheControlBlocksInBodyMap(bodyMap)
 	}
-	fixedSystem := buildFixedClaudeCodeSystemWithCacheSlots(cacheSlots)
+	fixedSystem := filterClaudeBillingHeaderSystem(buildFixedClaudeCodeSystemWithCacheSlots(cacheSlots))
+	claudeReq.System = filterClaudeBillingHeaderSystem(claudeReq.System)
 
 	// bodyMap 解析失败时，至少保证本地敏感词与计费逻辑使用正确的 system。
 	if bodyMap == nil {
 		if len(claudeReq.System) == 0 {
 			claudeReq.System = fixedSystem
-			return nil, false
+			return nil, false, false
 		}
-		if isOfficialClaudeCLIRequest(c, nil, claudeReq.System) {
-			return nil, false
+		if c.GetBool("claude_is_official_cli") {
+			return nil, false, false
 		}
 		claudeReq.System = append(fixedSystem, claudeReq.System...)
-		return nil, false
+		return nil, false, false
 	}
 
 	userSystemRaw, hasSystem := bodyMap["system"]
+	if patchedRaw, rawChanged, rawDeleted := filterClaudeBillingHeaderSystemRaw(userSystemRaw); rawDeleted {
+		userSystemRaw = nil
+		hasSystem = false
+		shouldDeleteSystem = true
+	} else if rawChanged {
+		userSystemRaw = patchedRaw
+		shouldPatchSystem = true
+	}
+
 	if !hasSystem || isEmptySystemRaw(userSystemRaw) {
+		if c.GetBool("claude_is_official_cli") {
+			claudeReq.System = nil
+			return nil, false, true
+		}
 		claudeReq.System = fixedSystem
 		patched, err := json.Marshal(claudeReq.System)
 		if err != nil {
-			return nil, false
+			return nil, false, false
 		}
-		return patched, true
+		return patched, true, false
 	}
 
-	if isOfficialClaudeCLIRequest(c, userSystemRaw, claudeReq.System) {
-		return nil, false
+	if c.GetBool("claude_is_official_cli") {
+		if shouldPatchSystem {
+			return userSystemRaw, true, false
+		}
+		return nil, false, false
 	}
 
 	claudeReq.System = append(fixedSystem, claudeReq.System...)
 	mergedRaw, err := mergeFixedAndUserSystemRaw(userSystemRaw, fixedSystem)
 	if err == nil {
-		return mergedRaw, true
+		return mergedRaw, true, false
 	}
 	patched, err := json.Marshal(claudeReq.System)
 	if err != nil {
-		return nil, false
+		return nil, false, false
 	}
-	return patched, true
+	return patched, true, false
 }
 
 func ClaudeCodeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) {
@@ -311,7 +408,7 @@ func ClaudeCodeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithSta
 		userSystemRaw = bodyMap["system"]
 	}
 	c.Set("claude_is_official_cli", isOfficialClaudeCLIRequest(c, userSystemRaw, claudeReq.System))
-	patchedSystemRaw, shouldPatchSystem := applyClaudeCodeSystemRules(c, &claudeReq, bodyMap)
+	patchedSystemRaw, shouldPatchSystem, shouldDeleteSystem := applyClaudeCodeSystemRules(c, &claudeReq, bodyMap)
 
 	modelMapping := c.GetString("model_mapping")
 	if modelMapping != "" && modelMapping != "{}" {
@@ -376,7 +473,9 @@ func ClaudeCodeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithSta
 	// 转发时保留原始 JSON，仅替换必要字段（model / system）。
 	if bodyMap != nil {
 		bodyMap["model"] = []byte(strconv.Quote(claudeReq.Model))
-		if shouldPatchSystem {
+		if shouldDeleteSystem {
+			delete(bodyMap, "system")
+		} else if shouldPatchSystem {
 			bodyMap["system"] = patchedSystemRaw
 		}
 		if patched, marshalErr := json.Marshal(bodyMap); marshalErr == nil {
