@@ -15,6 +15,7 @@ import (
 	"one-api/middleware"
 	"one-api/model"
 	"one-api/relay"
+	"one-api/relay/channel/claudecode"
 	relaycommon "one-api/relay/common"
 	"one-api/relay/constant"
 	"one-api/service"
@@ -154,6 +155,20 @@ func testChannel(channel *model.Channel, testModel string) (err error, openAIErr
 	jsonData, err := json.Marshal(convertedRequest)
 	if err != nil {
 		return err, nil
+	}
+	if channel.Type == common.ChannelTypeClaudeCode {
+		var claudeReq claudecode.ClaudeRequest
+		if err = json.Unmarshal(jsonData, &claudeReq); err != nil {
+			return err, service.OpenAIErrorWrapperLocal(err, "unmarshal_claude_test_request_failed", http.StatusInternalServerError)
+		}
+		preparedReq, prepErr := relay.PrepareClaudeCodeMessagesRequest(c, meta, &claudeReq, jsonData)
+		if prepErr != nil {
+			return prepErr, service.OpenAIErrorWrapperLocal(prepErr, "prepare_claude_test_request_failed", http.StatusInternalServerError)
+		}
+		jsonData, err = preparedReq.Marshal(claudeReq.Model)
+		if err != nil {
+			return err, service.OpenAIErrorWrapperLocal(err, "marshal_claude_test_request_failed", http.StatusInternalServerError)
+		}
 	}
 	requestBody := bytes.NewBuffer(jsonData)
 	c.Request.Body = io.NopCloser(requestBody)

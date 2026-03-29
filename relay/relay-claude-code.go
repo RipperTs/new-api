@@ -61,6 +61,65 @@ func marshalClaudeRequestBodyWithModelFirst(bodyMap map[string]json.RawMessage, 
 	return buf.Bytes(), nil
 }
 
+type ClaudeCodePreparedRequest struct {
+	BodyMap            map[string]json.RawMessage
+	PatchedSystemRaw   json.RawMessage
+	ShouldPatchSystem  bool
+	ShouldDeleteSystem bool
+}
+
+func (p *ClaudeCodePreparedRequest) Marshal(model string) ([]byte, error) {
+	if p == nil || p.BodyMap == nil {
+		return nil, fmt.Errorf("prepared Claude Code request is nil")
+	}
+	p.BodyMap["model"] = []byte(strconv.Quote(model))
+	if p.ShouldDeleteSystem {
+		delete(p.BodyMap, "system")
+	} else if p.ShouldPatchSystem {
+		p.BodyMap["system"] = p.PatchedSystemRaw
+	}
+	return marshalClaudeRequestBodyWithModelFirst(p.BodyMap, model)
+}
+
+func PrepareClaudeCodeMessagesRequest(c *gin.Context, relayInfo *relaycommon.RelayInfo, claudeReq *claudecode.ClaudeRequest, jsonData []byte) (*ClaudeCodePreparedRequest, error) {
+	if claudeReq == nil {
+		return nil, fmt.Errorf("claudeReq is nil")
+	}
+	var bodyMap map[string]json.RawMessage
+	if err := json.Unmarshal(jsonData, &bodyMap); err != nil {
+		return nil, err
+	}
+	if messagesRaw, ok := bodyMap["messages"]; ok {
+		if patchedMessages, changed := normalizeInvalidThinkingInMessagesRaw(messagesRaw); changed {
+			bodyMap["messages"] = patchedMessages
+			_ = json.Unmarshal(patchedMessages, &claudeReq.Messages)
+		}
+	}
+	if patchedMetadata, changed, metadataErr := claudecode.EnsureMetadataUserIDRaw(bodyMap["metadata"], relayInfo.ApiKey); metadataErr != nil {
+		common.SysError("ensure Claude Code metadata.user_id failed: " + metadataErr.Error())
+	} else if changed {
+		bodyMap["metadata"] = patchedMetadata
+		_ = json.Unmarshal(patchedMetadata, &claudeReq.Metadata)
+	}
+	if _, ok := bodyMap["tools"]; !ok && shouldSimulateClaudeCodeCLI(relayInfo.ChannelSetting) {
+		if toolsRaw, shouldInject, toolsErr := claudecode.GetEmbeddedCLIToolsRaw(); toolsErr != nil {
+			common.SysError("load Claude Code CLI tools failed: " + toolsErr.Error())
+		} else if shouldInject {
+			bodyMap["tools"] = toolsRaw
+		}
+	}
+
+	userSystemRaw := bodyMap["system"]
+	c.Set("claude_is_official_cli", isOfficialClaudeCLIRequest(c, userSystemRaw, claudeReq.System))
+	patchedSystemRaw, shouldPatchSystem, shouldDeleteSystem := applyClaudeCodeSystemRules(c, claudeReq, bodyMap)
+	return &ClaudeCodePreparedRequest{
+		BodyMap:            bodyMap,
+		PatchedSystemRaw:   patchedSystemRaw,
+		ShouldPatchSystem:  shouldPatchSystem,
+		ShouldDeleteSystem: shouldDeleteSystem,
+	}, nil
+}
+
 // BuildClaudeCodeNativeTestRequest 构造 Claude Code 原生 /v1/messages 测试请求体。
 // 仅用于管理端通道测试，避免 OpenAI 兼容转换造成上游风控误判。
 func BuildClaudeCodeNativeTestRequest(model string, stream bool) map[string]any {
@@ -441,37 +500,11 @@ func ClaudeCodeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithSta
 		writeClaudeMaybeStreamError(c, relayInfo, http.StatusInternalServerError, "api_error", err.Error())
 		return nil
 	}
-	var bodyMap map[string]json.RawMessage
-	if err = json.Unmarshal(jsonData, &bodyMap); err != nil {
-		bodyMap = nil
+	preparedReq, err := PrepareClaudeCodeMessagesRequest(c, relayInfo, &claudeReq, jsonData)
+	if err != nil {
+		writeClaudeMaybeStreamError(c, relayInfo, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return nil
 	}
-	if bodyMap != nil {
-		if messagesRaw, ok := bodyMap["messages"]; ok {
-			if patchedMessages, changed := normalizeInvalidThinkingInMessagesRaw(messagesRaw); changed {
-				bodyMap["messages"] = patchedMessages
-				_ = json.Unmarshal(patchedMessages, &claudeReq.Messages)
-			}
-		}
-		if patchedMetadata, changed, metadataErr := claudecode.EnsureMetadataUserIDRaw(bodyMap["metadata"], relayInfo.ApiKey); metadataErr != nil {
-			common.SysError("ensure Claude Code metadata.user_id failed: " + metadataErr.Error())
-		} else if changed {
-			bodyMap["metadata"] = patchedMetadata
-			_ = json.Unmarshal(patchedMetadata, &claudeReq.Metadata)
-		}
-		if _, ok := bodyMap["tools"]; !ok && shouldSimulateClaudeCodeCLI(relayInfo.ChannelSetting) {
-			if toolsRaw, shouldInject, toolsErr := claudecode.GetEmbeddedCLIToolsRaw(); toolsErr != nil {
-				common.SysError("load Claude Code CLI tools failed: " + toolsErr.Error())
-			} else if shouldInject {
-				bodyMap["tools"] = toolsRaw
-			}
-		}
-	}
-	var userSystemRaw json.RawMessage
-	if bodyMap != nil {
-		userSystemRaw = bodyMap["system"]
-	}
-	c.Set("claude_is_official_cli", isOfficialClaudeCLIRequest(c, userSystemRaw, claudeReq.System))
-	patchedSystemRaw, shouldPatchSystem, shouldDeleteSystem := applyClaudeCodeSystemRules(c, &claudeReq, bodyMap)
 
 	modelMapping := c.GetString("model_mapping")
 	if modelMapping != "" && modelMapping != "{}" {
@@ -534,16 +567,8 @@ func ClaudeCodeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithSta
 
 	// 注意：/v1/messages 请求体可能包含 thinking 等 beta 字段。
 	// 转发时保留原始 JSON，仅替换必要字段（model / system）。
-	if bodyMap != nil {
-		bodyMap["model"] = []byte(strconv.Quote(claudeReq.Model))
-		if shouldDeleteSystem {
-			delete(bodyMap, "system")
-		} else if shouldPatchSystem {
-			bodyMap["system"] = patchedSystemRaw
-		}
-		if patched, marshalErr := marshalClaudeRequestBodyWithModelFirst(bodyMap, claudeReq.Model); marshalErr == nil {
-			jsonData = patched
-		}
+	if patched, marshalErr := preparedReq.Marshal(claudeReq.Model); marshalErr == nil {
+		jsonData = patched
 	}
 
 	resp, err := adaptor.DoRequest(c, relayInfo, bytes.NewBuffer(jsonData))
