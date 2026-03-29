@@ -55,8 +55,53 @@ func BuildClaudeCodeNativeTestRequest(model string, stream bool) map[string]any 
 				},
 			},
 		},
-		"tools": []any{},
 	}
+}
+
+func shouldSimulateClaudeCodeCLI(setting map[string]interface{}) bool {
+	if setting == nil {
+		return false
+	}
+	raw, ok := setting["simulate_claude_code_cli"]
+	if !ok {
+		return false
+	}
+	switch v := raw.(type) {
+	case bool:
+		return v
+	case string:
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "true", "1", "yes", "on":
+			return true
+		default:
+			return false
+		}
+	case float64:
+		return v != 0
+	default:
+		return false
+	}
+}
+
+func buildClaudeCodeCLIToolsRaw() json.RawMessage {
+	return json.RawMessage(`[
+		{
+			"name": "mcp__get_pinned_reply",
+			"description": "This tool is intended solely for internal development and debugging; please disregard it in production environments.",
+			"input_schema": {
+				"type": "object",
+				"properties": {
+					"location": {
+						"type": "string",
+						"description": "The city and state, e.g. San Francisco, CA"
+					}
+				},
+				"required": [
+					"location"
+				]
+			}
+		}
+	]`)
 }
 
 func buildFixedClaudeCodeSystemWithCacheSlots(cacheSlots int) []claudecode.ClaudeContent {
@@ -399,8 +444,8 @@ func ClaudeCodeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithSta
 				_ = json.Unmarshal(patchedMessages, &claudeReq.Messages)
 			}
 		}
-		if _, ok := bodyMap["tools"]; !ok {
-			bodyMap["tools"] = json.RawMessage("[]")
+		if _, ok := bodyMap["tools"]; !ok && shouldSimulateClaudeCodeCLI(relayInfo.ChannelSetting) {
+			bodyMap["tools"] = buildClaudeCodeCLIToolsRaw()
 		}
 	}
 	var userSystemRaw json.RawMessage

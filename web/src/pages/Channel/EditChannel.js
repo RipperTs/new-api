@@ -7,7 +7,7 @@ import {
   showError,
   showInfo,
   showSuccess,
-  verifyJSON
+  verifyJSON,
 } from '../../helpers';
 import { CHANNEL_OPTIONS } from '../../constants';
 import Title from '@douyinfe/semi-ui/lib/es/typography/title';
@@ -22,24 +22,25 @@ import {
   Select,
   TextArea,
   Checkbox,
-  Banner
+  Banner,
 } from '@douyinfe/semi-ui';
 import { getChannelModels, loadChannelModels } from '../../components/utils.js';
 
 const MODEL_MAPPING_EXAMPLE = {
-  'gpt-3.5-turbo': 'gpt-3.5-turbo-0125'
+  'gpt-3.5-turbo': 'gpt-3.5-turbo-0125',
 };
 
 const STATUS_CODE_MAPPING_EXAMPLE = {
-  400: '500'
+  400: '500',
 };
 
 const REGION_EXAMPLE = {
-  'default': 'us-central1',
-  'claude-3-5-sonnet-20240620': 'europe-west1'
+  default: 'us-central1',
+  'claude-3-5-sonnet-20240620': 'europe-west1',
 };
 
-const fetchButtonTips = '1. 新建渠道时，请求通过当前浏览器发出；2. 编辑已有渠道，请求通过后端服务器发出';
+const fetchButtonTips =
+  '1. 新建渠道时，请求通过当前浏览器发出；2. 编辑已有渠道，请求通过后端服务器发出';
 const CODEX_OFFICIAL_BASE_URL = 'https://chatgpt.com/backend-api';
 const CLAUDE_OFFICIAL_BASE_URL = 'https://claude.ai';
 
@@ -88,7 +89,7 @@ function getRelatedModelsByType(type) {
         'mj_blend',
         'mj_upscale',
         'mj_describe',
-        'mj_uploads'
+        'mj_uploads',
       ];
     case 5:
       return [
@@ -107,13 +108,10 @@ function getRelatedModelsByType(type) {
         'mj_high_variation',
         'mj_low_variation',
         'mj_pan',
-        'mj_uploads'
+        'mj_uploads',
       ];
     case 36:
-      return [
-        'suno_music',
-        'suno_lyrics'
-      ];
+      return ['suno_music', 'suno_lyrics'];
     default:
       return getChannelModels(type);
   }
@@ -146,7 +144,7 @@ const EditChannel = (props) => {
     weight: 0,
     tag: '',
     proxy_url: '',
-    setting: ''
+    setting: '',
   };
   const [batch, setBatch] = useState(false);
   const [autoBan, setAutoBan] = useState(true);
@@ -171,11 +169,15 @@ const EditChannel = (props) => {
 
   // 工具：JSON字符串 -> 行
   const parseModelMappingToRows = (jsonStr) => {
-    if (!jsonStr || typeof jsonStr !== 'string' || jsonStr.trim() === '') return [];
+    if (!jsonStr || typeof jsonStr !== 'string' || jsonStr.trim() === '')
+      return [];
     try {
       const obj = JSON.parse(jsonStr);
       if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
-        return Object.entries(obj).map(([from, to]) => ({ from, to: String(to) }));
+        return Object.entries(obj).map(([from, to]) => ({
+          from,
+          to: String(to),
+        }));
       }
     } catch (e) {
       // ignore parse error, keep empty rows
@@ -266,7 +268,7 @@ const EditChannel = (props) => {
         data.model_mapping = JSON.stringify(
           JSON.parse(data.model_mapping),
           null,
-          2
+          2,
         );
       }
       // 初始化行编辑器
@@ -303,7 +305,7 @@ const EditChannel = (props) => {
         return {
           ...prev,
           base_url: CODEX_OFFICIAL_BASE_URL,
-          setting: JSON.stringify(next, null, 2)
+          setting: JSON.stringify(next, null, 2),
         };
       }
       next.auth_mode = 'api_key';
@@ -333,10 +335,24 @@ const EditChannel = (props) => {
     }
     return true;
   };
+  const getClaudeSimulateCLI = () => {
+    const s = getClaudeSetting();
+    if (typeof s.simulate_claude_code_cli === 'boolean') {
+      return s.simulate_claude_code_cli;
+    }
+    return false;
+  };
   const applyClaudeUseAnthropicBeta = (enabled) => {
     setInputs((prev) => {
       const s = safeParseJSON(prev.setting);
       const next = { ...s, use_anthropic_beta: !!enabled };
+      return { ...prev, setting: JSON.stringify(next, null, 2) };
+    });
+  };
+  const applyClaudeSimulateCLI = (enabled) => {
+    setInputs((prev) => {
+      const s = safeParseJSON(prev.setting);
+      const next = { ...s, simulate_claude_code_cli: !!enabled };
       return { ...prev, setting: JSON.stringify(next, null, 2) };
     });
   };
@@ -349,7 +365,7 @@ const EditChannel = (props) => {
         return {
           ...prev,
           base_url: CLAUDE_OFFICIAL_BASE_URL,
-          setting: JSON.stringify(next, null, 2)
+          setting: JSON.stringify(next, null, 2),
         };
       }
       next.auth_mode = 'api_key';
@@ -373,7 +389,9 @@ const EditChannel = (props) => {
     setCodexAuthLoading(true);
     try {
       if (isEdit) {
-        const res = await API.get(`/api/channel/${channelId}/codex_auth/status`);
+        const res = await API.get(
+          `/api/channel/${channelId}/codex_auth/status`,
+        );
         if (res?.data?.success) setCodexAuthStatus(res.data.data);
       } else {
         const sid = getCodexSessionId();
@@ -407,7 +425,9 @@ const EditChannel = (props) => {
     setClaudeAuthLoading(true);
     try {
       if (isEdit) {
-        const res = await API.get(`/api/channel/${channelId}/claude_auth/status`);
+        const res = await API.get(
+          `/api/channel/${channelId}/claude_auth/status`,
+        );
         if (res?.data?.success) setClaudeAuthStatus(res.data.data);
       } else {
         const sid = getClaudeSessionId();
@@ -437,7 +457,7 @@ const EditChannel = (props) => {
       codexOAuthDoneRef.current = false;
       const res = await API.post('/api/channel/codex_auth/start', {
         channel_id: isEdit ? parseInt(channelId) : 0,
-        proxy_url: inputs.proxy_url || ''
+        proxy_url: inputs.proxy_url || '',
       });
       if (!res?.data?.success) {
         showError(res?.data?.message || '启动 Codex 授权失败');
@@ -454,12 +474,12 @@ const EditChannel = (props) => {
           const next = {
             ...s,
             auth_mode: 'oauth',
-            codex_oauth_session_id: session_id
+            codex_oauth_session_id: session_id,
           };
           return {
             ...prev,
             base_url: CODEX_OFFICIAL_BASE_URL,
-            setting: JSON.stringify(next, null, 2)
+            setting: JSON.stringify(next, null, 2),
           };
         });
       }
@@ -478,7 +498,7 @@ const EditChannel = (props) => {
     setCodexAuthLoading(true);
     try {
       const res = await API.post('/api/channel/codex_auth/complete', {
-        callback_url: cb
+        callback_url: cb,
       });
       if (!res?.data?.success) {
         showError(res?.data?.message || '完成 Codex 授权失败');
@@ -488,7 +508,9 @@ const EditChannel = (props) => {
       codexOAuthDoneRef.current = true;
       if (isEdit) {
         if (!bound && session_id) {
-          await API.post(`/api/channel/${channelId}/codex_auth/bind`, { session_id });
+          await API.post(`/api/channel/${channelId}/codex_auth/bind`, {
+            session_id,
+          });
         }
         await loadChannel();
       } else if (session_id) {
@@ -497,12 +519,12 @@ const EditChannel = (props) => {
           const next = {
             ...s,
             auth_mode: 'oauth',
-            codex_oauth_session_id: session_id
+            codex_oauth_session_id: session_id,
           };
           return {
             ...prev,
             base_url: CODEX_OFFICIAL_BASE_URL,
-            setting: JSON.stringify(next, null, 2)
+            setting: JSON.stringify(next, null, 2),
           };
         });
       }
@@ -520,7 +542,7 @@ const EditChannel = (props) => {
       claudeOAuthDoneRef.current = false;
       const res = await API.post('/api/channel/claude_auth/start', {
         channel_id: isEdit ? parseInt(channelId) : 0,
-        proxy_url: inputs.proxy_url || ''
+        proxy_url: inputs.proxy_url || '',
       });
       if (!res?.data?.success) {
         showError(res?.data?.message || '启动 Claude 授权失败');
@@ -537,12 +559,12 @@ const EditChannel = (props) => {
           const next = {
             ...s,
             auth_mode: 'oauth',
-            claude_oauth_session_id: session_id
+            claude_oauth_session_id: session_id,
           };
           return {
             ...prev,
             base_url: CLAUDE_OFFICIAL_BASE_URL,
-            setting: JSON.stringify(next, null, 2)
+            setting: JSON.stringify(next, null, 2),
           };
         });
       }
@@ -561,7 +583,7 @@ const EditChannel = (props) => {
     setClaudeAuthLoading(true);
     try {
       const res = await API.post('/api/channel/claude_auth/complete', {
-        callback_url: cb
+        callback_url: cb,
       });
       if (!res?.data?.success) {
         showError(res?.data?.message || '完成 Claude 授权失败');
@@ -571,7 +593,9 @@ const EditChannel = (props) => {
       claudeOAuthDoneRef.current = true;
       if (isEdit) {
         if (!bound && session_id) {
-          await API.post(`/api/channel/${channelId}/claude_auth/bind`, { session_id });
+          await API.post(`/api/channel/${channelId}/claude_auth/bind`, {
+            session_id,
+          });
         }
         await loadChannel();
       } else if (session_id) {
@@ -580,12 +604,12 @@ const EditChannel = (props) => {
           const next = {
             ...s,
             auth_mode: 'oauth',
-            claude_oauth_session_id: session_id
+            claude_oauth_session_id: session_id,
           };
           return {
             ...prev,
             base_url: CLAUDE_OFFICIAL_BASE_URL,
-            setting: JSON.stringify(next, null, 2)
+            setting: JSON.stringify(next, null, 2),
           };
         });
       }
@@ -631,9 +655,9 @@ const EditChannel = (props) => {
             base_url: inputs['base_url'],
             type: inputs['type'],
             key: inputs['key'],
-            proxy_url: inputs['proxy_url']
+            proxy_url: inputs['proxy_url'],
           });
-          
+
           if (res.data && res.data.success) {
             models.push(...res.data.data);
           } else {
@@ -660,7 +684,7 @@ const EditChannel = (props) => {
       let res = await API.get(`/api/channel/models`);
       let localModelOptions = res.data.data.map((model) => ({
         label: model.id,
-        value: model.id
+        value: model.id,
       }));
       setOriginModelOptions(localModelOptions);
       setFullModels(res.data.data.map((model) => model.id));
@@ -678,8 +702,8 @@ const EditChannel = (props) => {
       setGroupOptions(
         res.data.data.map((group) => ({
           label: group,
-          value: group
-        }))
+          value: group,
+        })),
       );
     } catch (error) {
       showError(error.message);
@@ -692,7 +716,7 @@ const EditChannel = (props) => {
       if (!localModelOptions.find((option) => option.label === model)) {
         localModelOptions.push({
           label: model,
-          value: model
+          value: model,
         });
       }
     });
@@ -721,7 +745,9 @@ const EditChannel = (props) => {
         codexOAuthDoneRef.current = true;
         if (isEdit) {
           if (!bound && session_id) {
-            await API.post(`/api/channel/${channelId}/codex_auth/bind`, { session_id });
+            await API.post(`/api/channel/${channelId}/codex_auth/bind`, {
+              session_id,
+            });
           }
           await loadChannel();
         } else if (session_id) {
@@ -730,12 +756,12 @@ const EditChannel = (props) => {
             const next = {
               ...s,
               auth_mode: 'oauth',
-              codex_oauth_session_id: session_id
+              codex_oauth_session_id: session_id,
             };
             return {
               ...prev,
               base_url: CODEX_OFFICIAL_BASE_URL,
-              setting: JSON.stringify(next, null, 2)
+              setting: JSON.stringify(next, null, 2),
             };
           });
         }
@@ -749,7 +775,9 @@ const EditChannel = (props) => {
         claudeOAuthDoneRef.current = true;
         if (isEdit) {
           if (!bound && session_id) {
-            await API.post(`/api/channel/${channelId}/claude_auth/bind`, { session_id });
+            await API.post(`/api/channel/${channelId}/claude_auth/bind`, {
+              session_id,
+            });
           }
           await loadChannel();
         } else if (session_id) {
@@ -758,12 +786,12 @@ const EditChannel = (props) => {
             const next = {
               ...s,
               auth_mode: 'oauth',
-              claude_oauth_session_id: session_id
+              claude_oauth_session_id: session_id,
             };
             return {
               ...prev,
               base_url: CLAUDE_OFFICIAL_BASE_URL,
-              setting: JSON.stringify(next, null, 2)
+              setting: JSON.stringify(next, null, 2),
             };
           });
         }
@@ -834,7 +862,7 @@ const EditChannel = (props) => {
     if (localInputs.base_url && localInputs.base_url.endsWith('/')) {
       localInputs.base_url = localInputs.base_url.slice(
         0,
-        localInputs.base_url.length - 1
+        localInputs.base_url.length - 1,
       );
     }
     if (localInputs.type === 3 && localInputs.other === '') {
@@ -855,7 +883,7 @@ const EditChannel = (props) => {
     if (isEdit) {
       res = await API.put(`/api/channel/`, {
         ...localInputs,
-        id: parseInt(channelId)
+        id: parseInt(channelId),
       });
     } else {
       res = await API.post(`/api/channel/`, localInputs);
@@ -889,7 +917,7 @@ const EditChannel = (props) => {
         localModelOptions.push({
           key: model,
           text: model,
-          value: model
+          value: model,
         });
       } else if (model) {
         showError(t('某些模型已存在！'));
@@ -904,26 +932,30 @@ const EditChannel = (props) => {
     handleInputChange('models', localModels);
   };
 
-
   return (
     <>
       <SideSheet
         maskClosable={false}
         placement={isEdit ? 'right' : 'left'}
         title={
-          <Title level={3}>{isEdit ? t('更新渠道信息') : t('创建新的渠道')}</Title>
+          <Title level={3}>
+            {isEdit ? t('更新渠道信息') : t('创建新的渠道')}
+          </Title>
         }
         headerStyle={{ borderBottom: '1px solid var(--semi-color-border)' }}
-        bodyStyle={{ borderBottom: '1px solid var(--semi-color-border)', paddingBottom: '20px' }}
+        bodyStyle={{
+          borderBottom: '1px solid var(--semi-color-border)',
+          paddingBottom: '20px',
+        }}
         visible={props.visible}
         footer={
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
             <Space>
-              <Button theme="solid" size={'large'} onClick={submit}>
+              <Button theme='solid' size={'large'} onClick={submit}>
                 {t('提交')}
               </Button>
               <Button
-                theme="solid"
+                theme='solid'
                 size={'large'}
                 type={'tertiary'}
                 onClick={handleCancel}
@@ -942,7 +974,7 @@ const EditChannel = (props) => {
             <Typography.Text strong>{t('类型')}：</Typography.Text>
           </div>
           <Select
-            name="type"
+            name='type'
             required
             optionList={CHANNEL_OPTIONS}
             value={inputs.type}
@@ -954,7 +986,9 @@ const EditChannel = (props) => {
               <div style={{ marginTop: 10 }}>
                 <Banner
                   type={'warning'}
-                  description={t('注意，模型部署名称必须和模型名称保持一致，因为 One API 会把请求体中的 model 参数替换为你的部署名称（模型名称中的点会被剔除）')}
+                  description={t(
+                    '注意，模型部署名称必须和模型名称保持一致，因为 One API 会把请求体中的 model 参数替换为你的部署名称（模型名称中的点会被剔除）',
+                  )}
                 ></Banner>
               </div>
               <div style={{ marginTop: 10 }}>
@@ -963,31 +997,35 @@ const EditChannel = (props) => {
                 </Typography.Text>
               </div>
               <Input
-                label="AZURE_OPENAI_ENDPOINT"
-                name="azure_base_url"
-                placeholder={t('请输入 AZURE_OPENAI_ENDPOINT，例如：https://docs-test-001.openai.azure.com')}
+                label='AZURE_OPENAI_ENDPOINT'
+                name='azure_base_url'
+                placeholder={t(
+                  '请输入 AZURE_OPENAI_ENDPOINT，例如：https://docs-test-001.openai.azure.com',
+                )}
                 onChange={(value) => {
                   handleInputChange('base_url', value);
                 }}
                 value={inputs.base_url}
-                autoComplete="new-password"
+                autoComplete='new-password'
               />
               <div style={{ marginTop: 10 }}>
                 <Typography.Text strong>{t('默认 API 版本')}：</Typography.Text>
               </div>
               <Input
                 label={t('默认 API 版本')}
-                name="azure_other"
-                placeholder={t('请输入默认 API 版本，例如：2023-06-01-preview，该配置可以被实际的请求查询参数所覆盖')}
+                name='azure_other'
+                placeholder={t(
+                  '请输入默认 API 版本，例如：2023-06-01-preview，该配置可以被实际的请求查询参数所覆盖',
+                )}
                 onChange={(value) => {
                   handleInputChange('other', value);
                 }}
                 value={inputs.other}
-                autoComplete="new-password"
+                autoComplete='new-password'
               />
             </>
           )}
-          {(inputs.type === 8) && (
+          {inputs.type === 8 && (
             <>
               <div style={{ marginTop: 10 }}>
                 <Banner
@@ -1001,222 +1039,265 @@ const EditChannel = (props) => {
                 </Typography.Text>
               </div>
               <Input
-                name="base_url"
+                name='base_url'
                 placeholder='请输入完整的URL，例如：https://api.openai.com/v1/chat/completions'
                 onChange={(value) => {
                   handleInputChange('base_url', value);
                 }}
                 value={inputs.base_url}
-                autoComplete="new-password"
+                autoComplete='new-password'
               />
             </>
           )}
-          {inputs.type !== 3 && inputs.type !== 8 && inputs.type !== 22 && inputs.type !== 36 && (
-            <>
-              {inputs.type === 44 && (
-                <>
-                  <div style={{ marginTop: 10 }}>
-                    <Typography.Text strong>{t('Claude 认证方式')}：</Typography.Text>
-                  </div>
-                  <Select
-                    style={{ width: '50%' }}
-                    value={getClaudeAuthMode()}
-                    optionList={[
-                      { label: t('秘钥（镜像站/自建）'), value: 'api_key' },
-                      { label: t('Auth 登录（官方）'), value: 'oauth' }
-                    ]}
-                    onChange={(v) => {
-                      applyClaudeAuthMode(v);
-                    }}
-                  />
-                  <div style={{ marginTop: 10, display: 'flex' }}>
-                    <Space>
-                      <Checkbox
-                        checked={getClaudeUseAnthropicBeta()}
-                        onChange={() => {
-                          applyClaudeUseAnthropicBeta(!getClaudeUseAnthropicBeta());
-                        }}
-                      />
-                      <Typography.Text strong>使用 anthropic-beta 请求头</Typography.Text>
-                    </Space>
-                  </div>
-                  {getClaudeAuthMode() === 'oauth' && (
+          {inputs.type !== 3 &&
+            inputs.type !== 8 &&
+            inputs.type !== 22 &&
+            inputs.type !== 36 && (
+              <>
+                {inputs.type === 44 && (
+                  <>
                     <div style={{ marginTop: 10 }}>
-                      <Banner
-                        type="info"
-                        style={{ marginBottom: 10 }}
-                        description={t('线上部署无法接收 localhost 回调：登录授权完成后浏览器会跳转到 localhost（报错无影响），复制地址栏的回调 URL（包含 code 和 state）粘贴到下方再点击「完成授权」')}
-                      />
-                      <Space>
-                        <Button
-                          type="primary"
-                          loading={claudeAuthLoading}
-                          onClick={startClaudeOAuth}
-                        >
-                          {isEdit ? t('授权登录并绑定') : t('开始授权登录')}
-                        </Button>
-                        <Button
-                          loading={claudeAuthLoading}
-                          disabled={!claudeCallbackUrl.trim()}
-                          onClick={completeClaudeOAuth}
-                        >
-                          {t('完成授权')}
-                        </Button>
-                        <Button loading={claudeAuthLoading} onClick={refreshClaudeAuthStatus}>
-                          {t('刷新状态')}
-                        </Button>
-                      </Space>
-                      <div style={{ marginTop: 10 }}>
-                        <Typography.Text strong>{t('回调 URL')}：</Typography.Text>
-                      </div>
-                      <TextArea
-                        placeholder="http://localhost:54545/callback?code=...&state=..."
-                        autosize={{ minRows: 2, maxRows: 4 }}
-                        value={claudeCallbackUrl}
-                        onChange={(v) => setClaudeCallbackUrl(v)}
-                      />
-                      {claudeAuthStatus && (
-                        <Banner
-                          style={{ marginTop: 10 }}
-                          type="success"
-                          description={
-                            <>
-                              <div>{t('授权信息已获取')}</div>
-                              {claudeAuthStatus.email && (
-                                <div>
-                                  {t('邮箱')}: {claudeAuthStatus.email}
-                                </div>
-                              )}
-                            </>
-                          }
-                        />
-                      )}
+                      <Typography.Text strong>
+                        {t('Claude 认证方式')}：
+                      </Typography.Text>
                     </div>
-                  )}
-                </>
-              )}
-              {inputs.type === 45 && (
-                <>
-                  <div style={{ marginTop: 10 }}>
-                    <Typography.Text strong>{t('Codex 认证方式')}：</Typography.Text>
-                  </div>
-                  <Select
-                    style={{ width: '50%' }}
-                    value={getCodexAuthMode()}
-                    optionList={[
-                      { label: t('秘钥（镜像站/自建）'), value: 'api_key' },
-                      { label: t('Auth 登录（官方）'), value: 'oauth' }
-                    ]}
-                    onChange={(v) => {
-                      applyCodexAuthMode(v);
-                    }}
-                  />
-                  {getCodexAuthMode() === 'oauth' && (
+                    <Select
+                      style={{ width: '50%' }}
+                      value={getClaudeAuthMode()}
+                      optionList={[
+                        { label: t('秘钥（镜像站/自建）'), value: 'api_key' },
+                        { label: t('Auth 登录（官方）'), value: 'oauth' },
+                      ]}
+                      onChange={(v) => {
+                        applyClaudeAuthMode(v);
+                      }}
+                    />
+                    <div style={{ marginTop: 10, display: 'flex' }}>
+                      <Space>
+                        <Checkbox
+                          checked={getClaudeUseAnthropicBeta()}
+                          onChange={() => {
+                            applyClaudeUseAnthropicBeta(
+                              !getClaudeUseAnthropicBeta(),
+                            );
+                          }}
+                        />
+                        <Typography.Text strong>
+                          使用 anthropic-beta 请求头
+                        </Typography.Text>
+                      </Space>
+                    </div>
+                    <div style={{ marginTop: 10, display: 'flex' }}>
+                      <Space>
+                        <Checkbox
+                          checked={getClaudeSimulateCLI()}
+                          onChange={() => {
+                            applyClaudeSimulateCLI(!getClaudeSimulateCLI());
+                          }}
+                        />
+                        <Typography.Text strong>
+                          完全模拟 Claude Code CLI 请求
+                        </Typography.Text>
+                      </Space>
+                    </div>
+                    {getClaudeAuthMode() === 'oauth' && (
+                      <div style={{ marginTop: 10 }}>
+                        <Banner
+                          type='info'
+                          style={{ marginBottom: 10 }}
+                          description={t(
+                            '线上部署无法接收 localhost 回调：登录授权完成后浏览器会跳转到 localhost（报错无影响），复制地址栏的回调 URL（包含 code 和 state）粘贴到下方再点击「完成授权」',
+                          )}
+                        />
+                        <Space>
+                          <Button
+                            type='primary'
+                            loading={claudeAuthLoading}
+                            onClick={startClaudeOAuth}
+                          >
+                            {isEdit ? t('授权登录并绑定') : t('开始授权登录')}
+                          </Button>
+                          <Button
+                            loading={claudeAuthLoading}
+                            disabled={!claudeCallbackUrl.trim()}
+                            onClick={completeClaudeOAuth}
+                          >
+                            {t('完成授权')}
+                          </Button>
+                          <Button
+                            loading={claudeAuthLoading}
+                            onClick={refreshClaudeAuthStatus}
+                          >
+                            {t('刷新状态')}
+                          </Button>
+                        </Space>
+                        <div style={{ marginTop: 10 }}>
+                          <Typography.Text strong>
+                            {t('回调 URL')}：
+                          </Typography.Text>
+                        </div>
+                        <TextArea
+                          placeholder='http://localhost:54545/callback?code=...&state=...'
+                          autosize={{ minRows: 2, maxRows: 4 }}
+                          value={claudeCallbackUrl}
+                          onChange={(v) => setClaudeCallbackUrl(v)}
+                        />
+                        {claudeAuthStatus && (
+                          <Banner
+                            style={{ marginTop: 10 }}
+                            type='success'
+                            description={
+                              <>
+                                <div>{t('授权信息已获取')}</div>
+                                {claudeAuthStatus.email && (
+                                  <div>
+                                    {t('邮箱')}: {claudeAuthStatus.email}
+                                  </div>
+                                )}
+                              </>
+                            }
+                          />
+                        )}
+                      </div>
+                    )}
+                  </>
+                )}
+                {inputs.type === 45 && (
+                  <>
                     <div style={{ marginTop: 10 }}>
-                      <Banner
-                        type="warning"
-                        style={{ marginBottom: 10 }}
-                        description={t('如遇到 “Country, region, or territory not supported”，请在「代理URL」填写可用地区的代理后再授权')}
-                      />
-                      <Banner
-                        type="info"
-                        style={{ marginBottom: 10 }}
-                        description={t('线上部署无法接收 localhost 回调：登录授权完成后浏览器会跳转到 localhost（报错无影响），复制地址栏的回调 URL（包含 code 和 state）粘贴到下方再点击「完成授权」')}
-                      />
-                      <Space>
-                        <Button
-                          type="primary"
-                          loading={codexAuthLoading}
-                          onClick={startCodexOAuth}
-                        >
-                          {isEdit ? t('授权登录并绑定') : t('开始授权登录')}
-                        </Button>
-                        <Button
-                          loading={codexAuthLoading}
-                          disabled={!codexCallbackUrl.trim()}
-                          onClick={completeCodexOAuth}
-                        >
-                          {t('完成授权')}
-                        </Button>
-                        <Button loading={codexAuthLoading} onClick={refreshCodexAuthStatus}>
-                          {t('刷新状态')}
-                        </Button>
-                      </Space>
-                      <div style={{ marginTop: 10 }}>
-                        <Typography.Text strong>{t('回调 URL')}：</Typography.Text>
-                      </div>
-                      <TextArea
-                        placeholder="http://localhost:1455/auth/callback?code=...&state=..."
-                        autosize={{ minRows: 2, maxRows: 4 }}
-                        value={codexCallbackUrl}
-                        onChange={(v) => setCodexCallbackUrl(v)}
-                      />
-                      {codexAuthStatus && (
-                        <Banner
-                          style={{ marginTop: 10 }}
-                          type="success"
-                          description={
-                            <>
-                              <div>{t('授权信息已获取')}</div>
-                              {codexAuthStatus.email && (
-                                <div>
-                                  {t('邮箱')}: {codexAuthStatus.email}
-                                </div>
-                              )}
-                              {codexAuthStatus.account_id && (
-                                <div>
-                                  {t('AccountId')}: {codexAuthStatus.account_id}
-                                </div>
-                              )}
-                            </>
-                          }
-                        />
-                      )}
+                      <Typography.Text strong>
+                        {t('Codex 认证方式')}：
+                      </Typography.Text>
                     </div>
-                  )}
-                </>
-              )}
-              <div style={{ marginTop: 10 }}>
-                <Typography.Text strong>{t('请求地址')}：</Typography.Text>
-              </div>
-              <Input
-                label={t('请求地址')}
-                name="base_url"
-                placeholder={
-                  (inputs.type === 45 && getCodexAuthMode() === 'oauth') ||
-                  (inputs.type === 44 && getClaudeAuthMode() === 'oauth')
-                    ? t('已自动填写官方请求地址')
-                    : inputs.type === 45
-                    ? '填入 Codex 镜像站接口地址, 通常以 /v1 结尾'
-                    : inputs.type === 44
-                    ? '填入 Claude Code 镜像站接口地址, 通常以 /v1 结尾'
-                    : t('此项可选，用于通过代理站来进行 API 调用')
-                }
-                disabled={
-                  (inputs.type === 45 && getCodexAuthMode() === 'oauth') ||
-                  (inputs.type === 44 && getClaudeAuthMode() === 'oauth')
-                }
-                onChange={(value) => {
-                  handleInputChange('base_url', value);
-                }}
-                value={inputs.base_url}
-                autoComplete="new-password"
-              />
-            </>
-          )}
+                    <Select
+                      style={{ width: '50%' }}
+                      value={getCodexAuthMode()}
+                      optionList={[
+                        { label: t('秘钥（镜像站/自建）'), value: 'api_key' },
+                        { label: t('Auth 登录（官方）'), value: 'oauth' },
+                      ]}
+                      onChange={(v) => {
+                        applyCodexAuthMode(v);
+                      }}
+                    />
+                    {getCodexAuthMode() === 'oauth' && (
+                      <div style={{ marginTop: 10 }}>
+                        <Banner
+                          type='warning'
+                          style={{ marginBottom: 10 }}
+                          description={t(
+                            '如遇到 “Country, region, or territory not supported”，请在「代理URL」填写可用地区的代理后再授权',
+                          )}
+                        />
+                        <Banner
+                          type='info'
+                          style={{ marginBottom: 10 }}
+                          description={t(
+                            '线上部署无法接收 localhost 回调：登录授权完成后浏览器会跳转到 localhost（报错无影响），复制地址栏的回调 URL（包含 code 和 state）粘贴到下方再点击「完成授权」',
+                          )}
+                        />
+                        <Space>
+                          <Button
+                            type='primary'
+                            loading={codexAuthLoading}
+                            onClick={startCodexOAuth}
+                          >
+                            {isEdit ? t('授权登录并绑定') : t('开始授权登录')}
+                          </Button>
+                          <Button
+                            loading={codexAuthLoading}
+                            disabled={!codexCallbackUrl.trim()}
+                            onClick={completeCodexOAuth}
+                          >
+                            {t('完成授权')}
+                          </Button>
+                          <Button
+                            loading={codexAuthLoading}
+                            onClick={refreshCodexAuthStatus}
+                          >
+                            {t('刷新状态')}
+                          </Button>
+                        </Space>
+                        <div style={{ marginTop: 10 }}>
+                          <Typography.Text strong>
+                            {t('回调 URL')}：
+                          </Typography.Text>
+                        </div>
+                        <TextArea
+                          placeholder='http://localhost:1455/auth/callback?code=...&state=...'
+                          autosize={{ minRows: 2, maxRows: 4 }}
+                          value={codexCallbackUrl}
+                          onChange={(v) => setCodexCallbackUrl(v)}
+                        />
+                        {codexAuthStatus && (
+                          <Banner
+                            style={{ marginTop: 10 }}
+                            type='success'
+                            description={
+                              <>
+                                <div>{t('授权信息已获取')}</div>
+                                {codexAuthStatus.email && (
+                                  <div>
+                                    {t('邮箱')}: {codexAuthStatus.email}
+                                  </div>
+                                )}
+                                {codexAuthStatus.account_id && (
+                                  <div>
+                                    {t('AccountId')}:{' '}
+                                    {codexAuthStatus.account_id}
+                                  </div>
+                                )}
+                              </>
+                            }
+                          />
+                        )}
+                      </div>
+                    )}
+                  </>
+                )}
+                <div style={{ marginTop: 10 }}>
+                  <Typography.Text strong>{t('请求地址')}：</Typography.Text>
+                </div>
+                <Input
+                  label={t('请求地址')}
+                  name='base_url'
+                  placeholder={
+                    (inputs.type === 45 && getCodexAuthMode() === 'oauth') ||
+                    (inputs.type === 44 && getClaudeAuthMode() === 'oauth')
+                      ? t('已自动填写官方请求地址')
+                      : inputs.type === 45
+                        ? '填入 Codex 镜像站接口地址, 通常以 /v1 结尾'
+                        : inputs.type === 44
+                          ? '填入 Claude Code 镜像站接口地址, 通常以 /v1 结尾'
+                          : t('此项可选，用于通过代理站来进行 API 调用')
+                  }
+                  disabled={
+                    (inputs.type === 45 && getCodexAuthMode() === 'oauth') ||
+                    (inputs.type === 44 && getClaudeAuthMode() === 'oauth')
+                  }
+                  onChange={(value) => {
+                    handleInputChange('base_url', value);
+                  }}
+                  value={inputs.base_url}
+                  autoComplete='new-password'
+                />
+              </>
+            )}
           {inputs.type === 22 && (
             <>
               <div style={{ marginTop: 10 }}>
                 <Typography.Text strong>{t('私有部署地址')}：</Typography.Text>
               </div>
               <Input
-                name="base_url"
-                placeholder={t('请输入私有部署地址，格式为：https://fastgpt.run/api/openapi')}
+                name='base_url'
+                placeholder={t(
+                  '请输入私有部署地址，格式为：https://fastgpt.run/api/openapi',
+                )}
                 onChange={(value) => {
                   handleInputChange('base_url', value);
                 }}
                 value={inputs.base_url}
-                autoComplete="new-password"
+                autoComplete='new-password'
               />
             </>
           )}
@@ -1224,17 +1305,21 @@ const EditChannel = (props) => {
             <>
               <div style={{ marginTop: 10 }}>
                 <Typography.Text strong>
-                  {t('注意非Chat API，请务必填写正确的API地址，否则可能导致无法使用')}
+                  {t(
+                    '注意非Chat API，请务必填写正确的API地址，否则可能导致无法使用',
+                  )}
                 </Typography.Text>
               </div>
               <Input
-                name="base_url"
-                placeholder={t('请输入到 /suno 前的路径，通常就是域名，例如：https://api.example.com')}
+                name='base_url'
+                placeholder={t(
+                  '请输入到 /suno 前的路径，通常就是域名，例如：https://api.example.com',
+                )}
                 onChange={(value) => {
                   handleInputChange('base_url', value);
                 }}
                 value={inputs.base_url}
-                autoComplete="new-password"
+                autoComplete='new-password'
               />
             </>
           )}
@@ -1243,20 +1328,20 @@ const EditChannel = (props) => {
           </div>
           <Input
             required
-            name="name"
+            name='name'
             placeholder={t('请为渠道命名')}
             onChange={(value) => {
               handleInputChange('name', value);
             }}
             value={inputs.name}
-            autoComplete="new-password"
+            autoComplete='new-password'
           />
           <div style={{ marginTop: 10 }}>
             <Typography.Text strong>{t('分组')}：</Typography.Text>
           </div>
           <Select
             placeholder={t('请选择可以使用该渠道的分组')}
-            name="groups"
+            name='groups'
             required
             multiple
             selection
@@ -1266,7 +1351,7 @@ const EditChannel = (props) => {
               handleInputChange('groups', value);
             }}
             value={inputs.groups}
-            autoComplete="new-password"
+            autoComplete='new-password'
             optionList={groupOptions}
           />
           {inputs.type === 18 && (
@@ -1275,7 +1360,7 @@ const EditChannel = (props) => {
                 <Typography.Text strong>模型版本：</Typography.Text>
               </div>
               <Input
-                name="other"
+                name='other'
                 placeholder={
                   '请输入星火大模型版本，注意是接口地址中的版本号，例如：v2.1'
                 }
@@ -1283,7 +1368,7 @@ const EditChannel = (props) => {
                   handleInputChange('other', value);
                 }}
                 value={inputs.other}
-                autoComplete="new-password"
+                autoComplete='new-password'
               />
             </>
           )}
@@ -1293,29 +1378,31 @@ const EditChannel = (props) => {
                 <Typography.Text strong>{t('部署地区')}：</Typography.Text>
               </div>
               <TextArea
-                name="other"
-                placeholder={t('请输入部署地区，例如：us-central1\n支持使用模型映射格式\n' +
-                  '{\n' +
-                  '    "default": "us-central1",\n' +
-                  '    "claude-3-5-sonnet-20240620": "europe-west1"\n' +
-                  '}')}
+                name='other'
+                placeholder={t(
+                  '请输入部署地区，例如：us-central1\n支持使用模型映射格式\n' +
+                    '{\n' +
+                    '    "default": "us-central1",\n' +
+                    '    "claude-3-5-sonnet-20240620": "europe-west1"\n' +
+                    '}',
+                )}
                 autosize={{ minRows: 2 }}
                 onChange={(value) => {
                   handleInputChange('other', value);
                 }}
                 value={inputs.other}
-                autoComplete="new-password"
+                autoComplete='new-password'
               />
               <Typography.Text
                 style={{
                   color: 'rgba(var(--semi-blue-5), 1)',
                   userSelect: 'none',
-                  cursor: 'pointer'
+                  cursor: 'pointer',
                 }}
                 onClick={() => {
                   handleInputChange(
                     'other',
-                    JSON.stringify(REGION_EXAMPLE, null, 2)
+                    JSON.stringify(REGION_EXAMPLE, null, 2),
                   );
                 }}
               >
@@ -1329,14 +1416,14 @@ const EditChannel = (props) => {
                 <Typography.Text strong>��识库 ID：</Typography.Text>
               </div>
               <Input
-                label="知识库 ID"
-                name="other"
+                label='知识库 ID'
+                name='other'
                 placeholder={'请输入知识库 ID，例如：123456'}
                 onChange={(value) => {
                   handleInputChange('other', value);
                 }}
                 value={inputs.other}
-                autoComplete="new-password"
+                autoComplete='new-password'
               />
             </>
           )}
@@ -1346,7 +1433,7 @@ const EditChannel = (props) => {
                 <Typography.Text strong>Account ID：</Typography.Text>
               </div>
               <Input
-                name="other"
+                name='other'
                 placeholder={
                   '请输入Account ID，例如：d6b5da8hk1awo8nap34ube6gh'
                 }
@@ -1354,7 +1441,7 @@ const EditChannel = (props) => {
                   handleInputChange('other', value);
                 }}
                 value={inputs.other}
-                autoComplete="new-password"
+                autoComplete='new-password'
               />
             </>
           )}
@@ -1363,7 +1450,7 @@ const EditChannel = (props) => {
           </div>
           <Select
             placeholder={'请选择该渠道所支持的模型'}
-            name="models"
+            name='models'
             required
             multiple
             selection
@@ -1373,13 +1460,13 @@ const EditChannel = (props) => {
               handleInputChange('models', value);
             }}
             value={inputs.models}
-            autoComplete="new-password"
+            autoComplete='new-password'
             optionList={modelOptions}
           />
           <div style={{ lineHeight: '40px', marginBottom: '12px' }}>
             <Space>
               <Button
-                type="primary"
+                type='primary'
                 onClick={() => {
                   handleInputChange('models', basicModels);
                 }}
@@ -1387,16 +1474,20 @@ const EditChannel = (props) => {
                 {t('填入相关模型')}
               </Button>
               <Button
-                type="secondary"
+                type='secondary'
                 onClick={() => {
                   handleInputChange('models', fullModels);
                 }}
               >
                 {t('填入所有模型')}
               </Button>
-              <Tooltip content={t('新建渠道时，请求通过当前浏览器发出；编辑已有渠道，请求通过后端服务器发出')}>
+              <Tooltip
+                content={t(
+                  '新建渠道时，请求通过当前浏览器发出；编辑已有渠道，请求通过后端服务器发出',
+                )}
+              >
                 <Button
-                  type="tertiary"
+                  type='tertiary'
                   onClick={() => {
                     fetchUpstreamModelList('models');
                   }}
@@ -1405,7 +1496,7 @@ const EditChannel = (props) => {
                 </Button>
               </Tooltip>
               <Button
-                type="warning"
+                type='warning'
                 onClick={() => {
                   handleInputChange('models', []);
                 }}
@@ -1415,7 +1506,7 @@ const EditChannel = (props) => {
             </Space>
             <Input
               addonAfter={
-                <Button type="primary" onClick={addCustomModels}>
+                <Button type='primary' onClick={addCustomModels}>
                   {t('填入')}
                 </Button>
               }
@@ -1435,17 +1526,27 @@ const EditChannel = (props) => {
               border: '1px solid var(--semi-color-border)',
               borderRadius: 6,
               padding: 12,
-              background: 'var(--semi-color-bg-0)'
+              background: 'var(--semi-color-bg-0)',
             }}
           >
-            <div style={{ maxHeight: 300, overflowY: 'auto', marginBottom: 8, paddingRight: 4 }}>
+            <div
+              style={{
+                maxHeight: 300,
+                overflowY: 'auto',
+                marginBottom: 8,
+                paddingRight: 4,
+              }}
+            >
               {(modelMappingRows || []).length === 0 && (
                 <Typography.Text type='tertiary'>
                   {t('未添加规则，点击下方“新增一条”开始')}。
                 </Typography.Text>
               )}
               {(modelMappingRows || []).map((row, idx) => (
-                <div key={idx} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                <div
+                  key={idx}
+                  style={{ display: 'flex', gap: 8, marginBottom: 8 }}
+                >
                   <Input
                     style={{ flex: 1 }}
                     placeholder={t('实际请求的模型名')}
@@ -1453,7 +1554,9 @@ const EditChannel = (props) => {
                     onChange={(v) => changeRow(idx, 'from', v)}
                     autoComplete='off'
                   />
-                  <Typography.Text style={{ lineHeight: '32px' }}>→</Typography.Text>
+                  <Typography.Text style={{ lineHeight: '32px' }}>
+                    →
+                  </Typography.Text>
                   <Input
                     style={{ flex: 1 }}
                     placeholder={t('重定向为真实可用的模型名')}
@@ -1471,15 +1574,14 @@ const EditChannel = (props) => {
               <Button type='primary' onClick={addMappingRow}>
                 {t('新增一条')}
               </Button>
-              <Button
-                type='warning'
-                onClick={() => updateRows([])}
-              >
+              <Button type='warning' onClick={() => updateRows([])}>
                 {t('清空')}
               </Button>
               <Button
                 onClick={() => {
-                  const rows = Object.entries(MODEL_MAPPING_EXAMPLE).map(([from, to]) => ({ from, to }));
+                  const rows = Object.entries(MODEL_MAPPING_EXAMPLE).map(
+                    ([from, to]) => ({ from, to }),
+                  );
                   updateRows(rows);
                 }}
               >
@@ -1494,16 +1596,16 @@ const EditChannel = (props) => {
           (inputs.type === 44 && getClaudeAuthMode() === 'oauth') ? (
             <Input
               label={t('密钥')}
-              name="key"
+              name='key'
               disabled
               placeholder={t('Auth 模式无需填写密钥，授权后自动保存')}
-              value=""
-              autoComplete="new-password"
+              value=''
+              autoComplete='new-password'
             />
           ) : batch ? (
             <TextArea
               label={t('密钥')}
-              name="key"
+              name='key'
               required
               placeholder={t('请输入密钥，一行一个')}
               onChange={(value) => {
@@ -1511,16 +1613,17 @@ const EditChannel = (props) => {
               }}
               value={inputs.key}
               style={{ minHeight: 150, fontFamily: 'JetBrains Mono, Consolas' }}
-              autoComplete="new-password"
+              autoComplete='new-password'
             />
           ) : (
             <>
               {inputs.type === 41 ? (
                 <TextArea
                   label={t('鉴权json')}
-                  name="key"
+                  name='key'
                   required
-                  placeholder={'{\n' +
+                  placeholder={
+                    '{\n' +
                     '  "type": "service_account",\n' +
                     '  "project_id": "abc-bcd-123-456",\n' +
                     '  "private_key_id": "123xxxxx456",\n' +
@@ -1532,25 +1635,26 @@ const EditChannel = (props) => {
                     '  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",\n' +
                     '  "client_x509_cert_url": "https://xxxxx.gserviceaccount.com",\n' +
                     '  "universe_domain": "googleapis.com"\n' +
-                    '}'}
+                    '}'
+                  }
                   onChange={(value) => {
                     handleInputChange('key', value);
                   }}
                   autosize={{ minRows: 10 }}
                   value={inputs.key}
-                  autoComplete="new-password"
+                  autoComplete='new-password'
                 />
               ) : (
                 <Input
                   label={t('密钥')}
-                  name="key"
+                  name='key'
                   required
                   placeholder={t(type2secretPrompt(inputs.type))}
                   onChange={(value) => {
                     handleInputChange('key', value);
                   }}
                   value={inputs.key}
-                  autoComplete="new-password"
+                  autoComplete='new-password'
                 />
               )}
             </>
@@ -1561,7 +1665,7 @@ const EditChannel = (props) => {
                 <Checkbox
                   checked={batch}
                   label={t('批量创建')}
-                  name="batch"
+                  name='batch'
                   disabled={
                     (inputs.type === 45 && getCodexAuthMode() === 'oauth') ||
                     (inputs.type === 44 && getClaudeAuthMode() === 'oauth')
@@ -1579,7 +1683,7 @@ const EditChannel = (props) => {
               </div>
               <Input
                 label={t('组织，可选，不填则为默认组织')}
-                name="openai_organization"
+                name='openai_organization'
                 placeholder={t('请输入组织org-xxx')}
                 onChange={(value) => {
                   handleInputChange('openai_organization', value);
@@ -1592,7 +1696,7 @@ const EditChannel = (props) => {
             <Typography.Text strong>{t('默认测试模型')}：</Typography.Text>
           </div>
           <Input
-            name="test_model"
+            name='test_model'
             placeholder={t('不填则为模型列表第一个')}
             onChange={(value) => {
               handleInputChange('test_model', value);
@@ -1602,14 +1706,16 @@ const EditChannel = (props) => {
           <div style={{ marginTop: 10, display: 'flex' }}>
             <Space>
               <Checkbox
-                name="auto_ban"
+                name='auto_ban'
                 checked={autoBan}
                 onChange={() => {
                   setAutoBan(!autoBan);
                 }}
               />
               <Typography.Text strong>
-                {t('是否自动禁用（仅当自动禁用开启时有效），关闭后不会自动禁用该渠道：')}
+                {t(
+                  '是否自动禁用（仅当自动禁用开启时有效），关闭后不会自动禁用该渠道：',
+                )}
               </Typography.Text>
             </Space>
           </div>
@@ -1619,54 +1725,55 @@ const EditChannel = (props) => {
             </Typography.Text>
           </div>
           <TextArea
-            placeholder={t('此项可选，用于复写返回的状态码，比如将claude渠道的400错误复写为500（用于重试），请勿滥用该功能，例如：') +
-              '\n' + JSON.stringify(STATUS_CODE_MAPPING_EXAMPLE, null, 2)}
-            name="status_code_mapping"
+            placeholder={
+              t(
+                '此项可选，用于复写返回的状态码，比如将claude渠道的400错误复写为500（用于重试），请勿滥用该功能，例如：',
+              ) +
+              '\n' +
+              JSON.stringify(STATUS_CODE_MAPPING_EXAMPLE, null, 2)
+            }
+            name='status_code_mapping'
             onChange={(value) => {
               handleInputChange('status_code_mapping', value);
             }}
             autosize
             value={inputs.status_code_mapping}
-            autoComplete="new-password"
+            autoComplete='new-password'
           />
           <Typography.Text
             style={{
               color: 'rgba(var(--semi-blue-5), 1)',
               userSelect: 'none',
-              cursor: 'pointer'
+              cursor: 'pointer',
             }}
             onClick={() => {
               handleInputChange(
                 'status_code_mapping',
-                JSON.stringify(STATUS_CODE_MAPPING_EXAMPLE, null, 2)
+                JSON.stringify(STATUS_CODE_MAPPING_EXAMPLE, null, 2),
               );
             }}
           >
             {t('填入模板')}
           </Typography.Text>
           <div style={{ marginTop: 10 }}>
-            <Typography.Text strong>
-              {t('渠道标签')}
-            </Typography.Text>
+            <Typography.Text strong>{t('渠道标签')}</Typography.Text>
           </div>
           <Input
             label={t('渠道标签')}
-            name="tag"
+            name='tag'
             placeholder={t('渠道标签')}
             onChange={(value) => {
               handleInputChange('tag', value);
             }}
             value={inputs.tag}
-            autoComplete="new-password"
+            autoComplete='new-password'
           />
           <div style={{ marginTop: 10 }}>
-            <Typography.Text strong>
-              {t('渠道优先级')}
-            </Typography.Text>
+            <Typography.Text strong>{t('渠道优先级')}</Typography.Text>
           </div>
           <Input
             label={t('渠道优先级')}
-            name="priority"
+            name='priority'
             placeholder={t('渠道优先级')}
             onChange={(value) => {
               const number = parseInt(value);
@@ -1677,16 +1784,14 @@ const EditChannel = (props) => {
               }
             }}
             value={inputs.priority}
-            autoComplete="new-password"
+            autoComplete='new-password'
           />
           <div style={{ marginTop: 10 }}>
-            <Typography.Text strong>
-              {t('渠道权重')}
-            </Typography.Text>
+            <Typography.Text strong>{t('渠道权重')}</Typography.Text>
           </div>
           <Input
             label={t('渠道权重')}
-            name="weight"
+            name='weight'
             placeholder={t('渠道权重')}
             onChange={(value) => {
               const number = parseInt(value);
@@ -1697,62 +1802,69 @@ const EditChannel = (props) => {
               }
             }}
             value={inputs.weight}
-            autoComplete="new-password"
+            autoComplete='new-password'
           />
           <div style={{ marginTop: 10 }}>
-            <Typography.Text strong>
-              {t('代理URL')}
-            </Typography.Text>
+            <Typography.Text strong>{t('代理URL')}</Typography.Text>
           </div>
           <Input
             label={t('代理URL')}
-            name="proxy_url"
-            placeholder={t('此项可选，用于设置HTTP代理，格式如：socks5://user:pass@host:port 或 http://proxy.example.com:8080')}
+            name='proxy_url'
+            placeholder={t(
+              '此项可选，用于设置HTTP代理，格式如：socks5://user:pass@host:port 或 http://proxy.example.com:8080',
+            )}
             onChange={(value) => {
               handleInputChange('proxy_url', value);
             }}
             value={inputs.proxy_url}
-            autoComplete="new-password"
+            autoComplete='new-password'
           />
           {(inputs.type === 8 || inputs.type === 20 || inputs.type === 45) && (
-          <>
-            <div style={{ marginTop: 10 }}>
-              <Typography.Text strong>
-                {t('渠道额外设置')}：
-              </Typography.Text>
-            </div>
-            <TextArea
-              placeholder={t('此项可选，用于配置渠道特定设置，为一个 JSON 字符串，例如：') + '\n{\n  "force_format": true\n}'}
-              name="setting"
-              onChange={(value) => {
-                handleInputChange('setting', value);
-              }}
-              autosize
-              value={inputs.setting}
-              autoComplete="new-password"
-            />
-            <Typography.Text
-              style={{
-                color: 'rgba(var(--semi-blue-5), 1)',
-                userSelect: 'none',
-                cursor: 'pointer'
-              }}
-              onClick={() => {
-                handleInputChange(
-                  'setting',
-                  JSON.stringify(
-                    inputs.type === 45
-                      ? { chatgpt_account_id: 'your_account_id' }
-                      : inputs.type === 20
-                        ? { provider: { order: ['Z.AI'], allow_fallbacks: false } }
-                        : { force_format: true },
-                    null,
-                    2
-                  )
-                );
-              }}
-            >
-              {t('填入模板')}
+            <>
+              <div style={{ marginTop: 10 }}>
+                <Typography.Text strong>{t('渠道额外设置')}：</Typography.Text>
+              </div>
+              <TextArea
+                placeholder={
+                  t(
+                    '此项可选，用于配置渠道特定设置，为一个 JSON 字符串，例如：',
+                  ) + '\n{\n  "force_format": true\n}'
+                }
+                name='setting'
+                onChange={(value) => {
+                  handleInputChange('setting', value);
+                }}
+                autosize
+                value={inputs.setting}
+                autoComplete='new-password'
+              />
+              <Typography.Text
+                style={{
+                  color: 'rgba(var(--semi-blue-5), 1)',
+                  userSelect: 'none',
+                  cursor: 'pointer',
+                }}
+                onClick={() => {
+                  handleInputChange(
+                    'setting',
+                    JSON.stringify(
+                      inputs.type === 45
+                        ? { chatgpt_account_id: 'your_account_id' }
+                        : inputs.type === 20
+                          ? {
+                              provider: {
+                                order: ['Z.AI'],
+                                allow_fallbacks: false,
+                              },
+                            }
+                          : { force_format: true },
+                      null,
+                      2,
+                    ),
+                  );
+                }}
+              >
+                {t('填入模板')}
               </Typography.Text>
             </>
           )}
