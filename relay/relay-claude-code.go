@@ -83,27 +83,6 @@ func shouldSimulateClaudeCodeCLI(setting map[string]interface{}) bool {
 	}
 }
 
-func buildClaudeCodeCLIToolsRaw() json.RawMessage {
-	return json.RawMessage(`[
-		{
-			"name": "mcp__get_pinned_reply",
-			"description": "This tool is intended solely for internal development and debugging; please disregard it in production environments.",
-			"input_schema": {
-				"type": "object",
-				"properties": {
-					"location": {
-						"type": "string",
-						"description": "The city and state, e.g. San Francisco, CA"
-					}
-				},
-				"required": [
-					"location"
-				]
-			}
-		}
-	]`)
-}
-
 func buildFixedClaudeCodeSystemWithCacheSlots(cacheSlots int) []claudecode.ClaudeContent {
 	if cacheSlots < 0 {
 		cacheSlots = 0
@@ -445,7 +424,11 @@ func ClaudeCodeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithSta
 			}
 		}
 		if _, ok := bodyMap["tools"]; !ok && shouldSimulateClaudeCodeCLI(relayInfo.ChannelSetting) {
-			bodyMap["tools"] = buildClaudeCodeCLIToolsRaw()
+			if toolsRaw, shouldInject, toolsErr := claudecode.GetEmbeddedCLIToolsRaw(); toolsErr != nil {
+				common.SysError("load Claude Code CLI tools failed: " + toolsErr.Error())
+			} else if shouldInject {
+				bodyMap["tools"] = toolsRaw
+			}
 		}
 	}
 	var userSystemRaw json.RawMessage
