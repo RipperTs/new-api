@@ -22,6 +22,41 @@ func generateClaudeCodeUserID(apiKey string) string {
 	return fmt.Sprintf("user_%x_account__session_%s", hash, uuid.New().String())
 }
 
+func GenerateClaudeCodeUserID(apiKey string) string {
+	return generateClaudeCodeUserID(apiKey)
+}
+
+func EnsureMetadataUserIDRaw(metadataRaw json.RawMessage, apiKey string) (json.RawMessage, bool, error) {
+	trimmed := strings.TrimSpace(string(metadataRaw))
+	if trimmed == "" || trimmed == "null" {
+		patched, err := json.Marshal(map[string]any{
+			"user_id": generateClaudeCodeUserID(apiKey),
+		})
+		if err != nil {
+			return nil, false, err
+		}
+		return patched, true, nil
+	}
+
+	var metadata map[string]any
+	if err := json.Unmarshal(metadataRaw, &metadata); err != nil {
+		return nil, false, err
+	}
+	if metadata == nil {
+		metadata = make(map[string]any)
+	}
+	if userID, ok := metadata["user_id"].(string); ok && strings.TrimSpace(userID) != "" {
+		return metadataRaw, false, nil
+	}
+
+	metadata["user_id"] = generateClaudeCodeUserID(apiKey)
+	patched, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, false, err
+	}
+	return patched, true, nil
+}
+
 func stopReasonClaude2OpenAI(reason string) string {
 	switch reason {
 	case "stop_sequence":

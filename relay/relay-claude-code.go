@@ -452,6 +452,12 @@ func ClaudeCodeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithSta
 				_ = json.Unmarshal(patchedMessages, &claudeReq.Messages)
 			}
 		}
+		if patchedMetadata, changed, metadataErr := claudecode.EnsureMetadataUserIDRaw(bodyMap["metadata"], relayInfo.ApiKey); metadataErr != nil {
+			common.SysError("ensure Claude Code metadata.user_id failed: " + metadataErr.Error())
+		} else if changed {
+			bodyMap["metadata"] = patchedMetadata
+			_ = json.Unmarshal(patchedMetadata, &claudeReq.Metadata)
+		}
 		if _, ok := bodyMap["tools"]; !ok && shouldSimulateClaudeCodeCLI(relayInfo.ChannelSetting) {
 			if toolsRaw, shouldInject, toolsErr := claudecode.GetEmbeddedCLIToolsRaw(); toolsErr != nil {
 				common.SysError("load Claude Code CLI tools failed: " + toolsErr.Error())
