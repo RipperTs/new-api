@@ -70,6 +70,7 @@ func OpenRouterClaudeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorW
 		writeClaudeError(c, http.StatusBadRequest, "invalid_request_error", "messages is required")
 		return nil
 	}
+	claudeReq.System = filterOpenRouterRedundantSystem(claudeReq.System)
 	relayInfo.IsStream = claudeReq.Stream
 
 	var bodyMap map[string]json.RawMessage
@@ -330,6 +331,27 @@ func extractSystemText(system []claudecode.ClaudeContent) string {
 		sb.WriteString(item.Text)
 	}
 	return sb.String()
+}
+
+func filterOpenRouterRedundantSystem(system []claudecode.ClaudeContent) []claudecode.ClaudeContent {
+	if len(system) == 0 {
+		return nil
+	}
+	filtered := make([]claudecode.ClaudeContent, 0, len(system))
+	for _, item := range system {
+		text := strings.TrimSpace(item.Text)
+		if text == "" {
+			continue
+		}
+		if text == claudeCodeSystemCLIKeyword || isClaudeBillingHeaderSystemText(text) {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return filtered
 }
 
 func convertClaudeToolsToOpenAITools(tools []claudecode.Tool) []map[string]any {
