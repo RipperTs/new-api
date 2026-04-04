@@ -2,6 +2,7 @@ package claudecode
 
 import (
 	"bufio"
+	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -11,11 +12,15 @@ import (
 	"one-api/dto"
 	relaycommon "one-api/relay/common"
 	"one-api/service"
+	"regexp"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
+
+var claudeToolUseIDRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+var claudeToolUseInvalidCharRegex = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
 
 func generateClaudeCodeUserID(apiKey string) string {
 	hash := sha256.Sum256([]byte(apiKey))
@@ -68,6 +73,35 @@ func stopReasonClaude2OpenAI(reason string) string {
 	default:
 		return reason
 	}
+}
+
+func normalizeClaudeToolUseID(rawID string, idMap map[string]string) string {
+	trimmed := strings.TrimSpace(rawID)
+	if cached, ok := idMap[trimmed]; ok {
+		return cached
+	}
+	if trimmed == "" {
+		generated := "tool_" + common.GetUUID()
+		idMap[trimmed] = generated
+		return generated
+	}
+	if claudeToolUseIDRegex.MatchString(trimmed) {
+		idMap[trimmed] = trimmed
+		return trimmed
+	}
+
+	base := claudeToolUseInvalidCharRegex.ReplaceAllString(trimmed, "_")
+	base = strings.Trim(base, "_")
+	if base == "" {
+		base = "tool"
+	}
+	if len(base) > 48 {
+		base = base[:48]
+	}
+	sum := sha1.Sum([]byte(trimmed))
+	normalized := fmt.Sprintf("%s_%x", base, sum[:4])
+	idMap[trimmed] = normalized
+	return normalized
 }
 
 func RequestOpenAI2ClaudeComplete(textRequest dto.GeneralOpenAIRequest) *ClaudeRequest {
@@ -151,6 +185,7 @@ func RequestOpenAI2ClaudeMessage(textRequest dto.GeneralOpenAIRequest, info *rel
 		}
 	}
 	formatMessages := make([]dto.Message, 0)
+	toolUseIDMap := make(map[string]string)
 	lastMessage := dto.Message{
 		Role: "tool",
 	}
@@ -163,7 +198,7 @@ func RequestOpenAI2ClaudeMessage(textRequest dto.GeneralOpenAIRequest, info *rel
 			Content: message.Content,
 		}
 		if message.Role == "tool" {
-			fmtMessage.ToolCallId = message.ToolCallId
+			fmtMessage.ToolCallId = normalizeClaudeToolUseID(message.ToolCallId, toolUseIDMap)
 		}
 		if message.Role == "assistant" && message.ToolCalls != nil {
 			fmtMessage.ToolCalls = message.ToolCalls
@@ -261,7 +296,7 @@ func RequestOpenAI2ClaudeMessage(textRequest dto.GeneralOpenAIRequest, info *rel
 					}
 					lastMessage.Content = append(lastMessage.Content.([]ClaudeMediaMessage), ClaudeMediaMessage{
 						Type:      "tool_result",
-						ToolUseId: message.ToolCallId,
+						ToolUseId: normalizeClaudeToolUseID(message.ToolCallId, toolUseIDMap),
 						Content:   message.StringContent(),
 					})
 					claudeMessages[len(claudeMessages)-1] = lastMessage
@@ -271,7 +306,7 @@ func RequestOpenAI2ClaudeMessage(textRequest dto.GeneralOpenAIRequest, info *rel
 					claudeMessage.Content = []ClaudeMediaMessage{
 						{
 							Type:      "tool_result",
-							ToolUseId: message.ToolCallId,
+							ToolUseId: normalizeClaudeToolUseID(message.ToolCallId, toolUseIDMap),
 							Content:   message.StringContent(),
 						},
 					}
@@ -321,7 +356,7 @@ func RequestOpenAI2ClaudeMessage(textRequest dto.GeneralOpenAIRequest, info *rel
 						}
 						claudeMediaMessages = append(claudeMediaMessages, ClaudeMediaMessage{
 							Type:  "tool_use",
-							Id:    toolCall.ID,
+							Id:    normalizeClaudeToolUseID(toolCall.ID, toolUseIDMap),
 							Name:  toolCall.Function.Name,
 							Input: inputObj,
 						})

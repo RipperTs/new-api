@@ -3,6 +3,7 @@ package relay
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha1"
 	"encoding/json"
 	"fmt"
 	"github.com/gin-gonic/gin"
@@ -28,6 +29,8 @@ const (
 )
 
 var claudeCLIUserAgentRegex = regexp.MustCompile(`(?i)^claude-cli\/[\d.]+(?:[-\w]*)?\s+\(external,\s*(?:cli|claude-[\w-]+|sdk-[\w-]+)\)$`)
+var claudeToolUseIDRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+var claudeToolUseInvalidCharRegex = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
 
 func buildFixedClaudeCodeSystem() []claudecode.ClaudeContent {
 	return buildFixedClaudeCodeSystemWithCacheSlots(2)
@@ -90,7 +93,17 @@ func PrepareClaudeCodeMessagesRequest(c *gin.Context, relayInfo *relaycommon.Rel
 		return nil, err
 	}
 	if messagesRaw, ok := bodyMap["messages"]; ok {
-		if patchedMessages, changed := normalizeInvalidThinkingInMessagesRaw(messagesRaw); changed {
+		patchedMessages := messagesRaw
+		messagesChanged := false
+		if normalized, changed := normalizeInvalidThinkingInMessagesRaw(patchedMessages); changed {
+			patchedMessages = normalized
+			messagesChanged = true
+		}
+		if normalized, changed := normalizeInvalidToolUseIDInMessagesRaw(patchedMessages); changed {
+			patchedMessages = normalized
+			messagesChanged = true
+		}
+		if messagesChanged {
 			bodyMap["messages"] = patchedMessages
 			_ = json.Unmarshal(patchedMessages, &claudeReq.Messages)
 		}
@@ -714,6 +727,103 @@ func normalizeInvalidThinkingInMessagesRaw(raw json.RawMessage) (json.RawMessage
 		messages[i] = msg
 	}
 	if !changed {
+		return raw, false
+	}
+	patched, err := json.Marshal(messages)
+	if err != nil {
+		return raw, false
+	}
+	return patched, true
+}
+
+func sanitizeClaudeToolUseID(rawID string, idMap map[string]string) string {
+	trimmed := strings.TrimSpace(rawID)
+	if cached, ok := idMap[trimmed]; ok {
+		return cached
+	}
+
+	if trimmed == "" {
+		generated := "tool_" + common.GetUUID()
+		idMap[trimmed] = generated
+		return generated
+	}
+	if claudeToolUseIDRegex.MatchString(trimmed) {
+		idMap[trimmed] = trimmed
+		return trimmed
+	}
+
+	base := claudeToolUseInvalidCharRegex.ReplaceAllString(trimmed, "_")
+	base = strings.Trim(base, "_")
+	if base == "" {
+		base = "tool"
+	}
+	if len(base) > 48 {
+		base = base[:48]
+	}
+	sum := sha1.Sum([]byte(trimmed))
+	normalized := fmt.Sprintf("%s_%x", base, sum[:4])
+	idMap[trimmed] = normalized
+	return normalized
+}
+
+func patchClaudeToolUseID(v any, idMap map[string]string) bool {
+	switch t := v.(type) {
+	case map[string]any:
+		changed := false
+
+		blockType, _ := t["type"].(string)
+		switch blockType {
+		case "tool_use":
+			if id, ok := t["id"].(string); ok {
+				if normalized := sanitizeClaudeToolUseID(id, idMap); normalized != id {
+					t["id"] = normalized
+					changed = true
+				}
+			}
+		case "tool_result":
+			if toolUseID, ok := t["tool_use_id"].(string); ok {
+				if normalized := sanitizeClaudeToolUseID(toolUseID, idMap); normalized != toolUseID {
+					t["tool_use_id"] = normalized
+					changed = true
+				}
+			}
+		}
+
+		if toolUseObj, ok := t["tool_use"].(map[string]any); ok {
+			if id, ok := toolUseObj["id"].(string); ok {
+				if normalized := sanitizeClaudeToolUseID(id, idMap); normalized != id {
+					toolUseObj["id"] = normalized
+					changed = true
+				}
+			}
+		}
+
+		for _, sub := range t {
+			if patchClaudeToolUseID(sub, idMap) {
+				changed = true
+			}
+		}
+		return changed
+	case []any:
+		changed := false
+		for _, sub := range t {
+			if patchClaudeToolUseID(sub, idMap) {
+				changed = true
+			}
+		}
+		return changed
+	default:
+		return false
+	}
+}
+
+func normalizeInvalidToolUseIDInMessagesRaw(raw json.RawMessage) (json.RawMessage, bool) {
+	var messages any
+	if err := json.Unmarshal(raw, &messages); err != nil {
+		return raw, false
+	}
+	idMap := make(map[string]string)
+	if !patchClaudeToolUseID(messages, idMap) {
 		return raw, false
 	}
 	patched, err := json.Marshal(messages)
