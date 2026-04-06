@@ -76,6 +76,7 @@ var SMTPFrom = ""
 var SMTPToken = ""
 var NotificationEmail = strings.TrimSpace(os.Getenv("NOTIFICATION_EMAIL"))
 var NotificationCcEmails = SplitEmailRecipients(os.Getenv("NOTIFICATION_CC_EMAILS"))
+var NotificationWebhookSecret = strings.TrimSpace(os.Getenv("NOTIFICATION_WEBHOOK_SECRET"))
 var EmailNotificationEnabled = true
 var EmailNotificationGroups = []string{}
 var FeishuWebhookURL = strings.TrimSpace(os.Getenv("FEISHU_WEBHOOK_URL"))

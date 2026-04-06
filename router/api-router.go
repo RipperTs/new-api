@@ -88,6 +88,11 @@ func SetApiRouter(router *gin.Engine) {
 			optionRoute.POST("/notification/feishu", controller.SendNotificationFeishu)
 			optionRoute.POST("/rest_model_ratio", controller.ResetModelRatio)
 		}
+		notificationRoute := apiRouter.Group("/notification")
+		notificationRoute.Use(middleware.CriticalRateLimit(), middleware.NotificationWebhookAuth())
+		{
+			notificationRoute.POST("/send", controller.SendWebhookNotification)
+		}
 		channelRoute := apiRouter.Group("/channel")
 		channelRoute.Use(middleware.AdminAuth())
 		{

@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 var (
@@ -52,6 +53,9 @@ func LoadEnv() {
 	}
 	if os.Getenv("SQLITE_PATH") != "" {
 		SQLitePath = os.Getenv("SQLITE_PATH")
+	}
+	if os.Getenv("NOTIFICATION_WEBHOOK_SECRET") != "" {
+		NotificationWebhookSecret = strings.TrimSpace(os.Getenv("NOTIFICATION_WEBHOOK_SECRET"))
 	}
 	if *LogDir != "" {
 		var err error
