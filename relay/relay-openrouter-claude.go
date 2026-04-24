@@ -241,28 +241,53 @@ func convertClaudeThinkingToReasoning(bodyMap map[string]json.RawMessage) map[st
 	if bodyMap == nil {
 		return nil
 	}
-	raw, ok := bodyMap["thinking"]
-	if !ok || len(raw) == 0 {
-		return nil
-	}
-	var thinkingMap map[string]any
-	if err := json.Unmarshal(raw, &thinkingMap); err != nil || thinkingMap == nil {
-		return nil
-	}
 	reasoning := map[string]any{}
-	if t, ok := thinkingMap["type"].(string); ok && strings.TrimSpace(t) != "" {
-		reasoning["enabled"] = strings.EqualFold(strings.TrimSpace(t), "enabled")
-	}
-	budgetTokens := parseNumberToInt(thinkingMap["budget_tokens"])
-	if budgetTokens != 0 {
-		if effort := mapBudgetTokensToEffort(budgetTokens); effort != "" {
-			reasoning["effort"] = effort
+
+	if raw, ok := bodyMap["thinking"]; ok && len(raw) != 0 {
+		var thinkingMap map[string]any
+		if err := json.Unmarshal(raw, &thinkingMap); err == nil && thinkingMap != nil {
+			if t, ok := thinkingMap["type"].(string); ok && strings.TrimSpace(t) != "" {
+				reasoning["enabled"] = strings.EqualFold(strings.TrimSpace(t), "enabled")
+			}
+			budgetTokens := parseNumberToInt(thinkingMap["budget_tokens"])
+			if budgetTokens != 0 {
+				setReasoningEffortIfAbsent(reasoning, mapBudgetTokensToEffort(budgetTokens))
+			}
 		}
 	}
+	if raw, ok := bodyMap["output_config"]; ok && len(raw) != 0 {
+		var outputConfig map[string]any
+		if err := json.Unmarshal(raw, &outputConfig); err == nil && outputConfig != nil {
+			if effort, ok := outputConfig["effort"].(string); ok {
+				setReasoningEffortIfAbsent(reasoning, normalizeOpenRouterReasoningEffort(effort))
+			}
+		}
+	}
+
 	if len(reasoning) == 0 {
 		return nil
 	}
 	return reasoning
+}
+
+func setReasoningEffortIfAbsent(reasoning map[string]any, effort string) {
+	if reasoning == nil || strings.TrimSpace(effort) == "" {
+		return
+	}
+	if _, exists := reasoning["effort"]; !exists {
+		reasoning["effort"] = effort
+	}
+}
+
+func normalizeOpenRouterReasoningEffort(effort string) string {
+	switch strings.ToLower(strings.TrimSpace(effort)) {
+	case "max":
+		return "xhigh"
+	case "xhigh", "high", "medium", "low", "minimal", "none":
+		return strings.ToLower(strings.TrimSpace(effort))
+	default:
+		return ""
+	}
 }
 
 func parseNumberToInt(v any) int {
