@@ -95,9 +95,11 @@ func PrepareClaudeCodeMessagesRequest(c *gin.Context, relayInfo *relaycommon.Rel
 	if messagesRaw, ok := bodyMap["messages"]; ok {
 		patchedMessages := messagesRaw
 		messagesChanged := false
-		if normalized, changed := normalizeInvalidThinkingInMessagesRaw(patchedMessages); changed {
-			patchedMessages = normalized
-			messagesChanged = true
+		if !shouldPreserveThinkingBlocks(relayInfo) {
+			if normalized, changed := normalizeInvalidThinkingInMessagesRaw(patchedMessages); changed {
+				patchedMessages = normalized
+				messagesChanged = true
+			}
 		}
 		if normalized, changed := normalizeInvalidToolUseIDInMessagesRaw(patchedMessages); changed {
 			patchedMessages = normalized
@@ -668,6 +670,15 @@ func claudeMessageText(content any) string {
 		}
 	}
 	return ""
+}
+
+func shouldPreserveThinkingBlocks(relayInfo *relaycommon.RelayInfo) bool {
+	if relayInfo == nil {
+		return false
+	}
+	baseURL := strings.ToLower(strings.TrimRight(strings.TrimSpace(relayInfo.BaseUrl), "/"))
+	return baseURL == "https://api.deepseek.com/anthropic" ||
+		baseURL == "http://api.deepseek.com/anthropic"
 }
 
 func isLikelyClaudeThinkingSignature(signature string) bool {
