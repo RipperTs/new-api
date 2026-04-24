@@ -43,6 +43,8 @@ const fetchButtonTips =
   '1. 新建渠道时，请求通过当前浏览器发出；2. 编辑已有渠道，请求通过后端服务器发出';
 const CODEX_OFFICIAL_BASE_URL = 'https://chatgpt.com/backend-api';
 const CLAUDE_OFFICIAL_BASE_URL = 'https://claude.ai';
+const CLAUDE_DEEPSEEK_V4_BASE_URL = 'https://api.deepseek.com/anthropic';
+const CLAUDE_DEEPSEEK_V4_MODE = 'deepseek_v4';
 
 function type2secretPrompt(type) {
   // inputs.type === 15 ? '按照如下格式输入：APIKey|SecretKey' : (inputs.type === 18 ? '按照如下格式输入：APPID|APISecret|APIKey' : '请输入渠道对应的鉴权密钥')
@@ -342,6 +344,10 @@ const EditChannel = (props) => {
     }
     return false;
   };
+  const getClaudeDeepSeekV4Mode = () => {
+    const s = getClaudeSetting();
+    return s.compatibility_mode === CLAUDE_DEEPSEEK_V4_MODE;
+  };
   const applyClaudeUseAnthropicBeta = (enabled) => {
     setInputs((prev) => {
       const s = safeParseJSON(prev.setting);
@@ -356,12 +362,36 @@ const EditChannel = (props) => {
       return { ...prev, setting: JSON.stringify(next, null, 2) };
     });
   };
+  const applyClaudeDeepSeekV4Mode = (enabled) => {
+    setInputs((prev) => {
+      const s = safeParseJSON(prev.setting);
+      const next = { ...s };
+      if (enabled) {
+        next.compatibility_mode = CLAUDE_DEEPSEEK_V4_MODE;
+        next.auth_mode = 'api_key';
+        delete next.claude_oauth_session_id;
+        delete next.claude_email;
+        return {
+          ...prev,
+          base_url: CLAUDE_DEEPSEEK_V4_BASE_URL,
+          setting: JSON.stringify(next, null, 2),
+        };
+      }
+      delete next.compatibility_mode;
+      return { ...prev, setting: JSON.stringify(next, null, 2) };
+    });
+    if (enabled) {
+      setClaudeAuthStatus(null);
+      setClaudeCallbackUrl('');
+    }
+  };
   const applyClaudeAuthMode = (mode) => {
     setInputs((prev) => {
       const s = safeParseJSON(prev.setting);
       const next = { ...s };
       if (mode === 'oauth') {
         next.auth_mode = 'oauth';
+        delete next.compatibility_mode;
         return {
           ...prev,
           base_url: CLAUDE_OFFICIAL_BASE_URL,
@@ -1072,6 +1102,21 @@ const EditChannel = (props) => {
                         applyClaudeAuthMode(v);
                       }}
                     />
+                    <div style={{ marginTop: 10, display: 'flex' }}>
+                      <Space>
+                        <Checkbox
+                          checked={getClaudeDeepSeekV4Mode()}
+                          onChange={() => {
+                            applyClaudeDeepSeekV4Mode(
+                              !getClaudeDeepSeekV4Mode(),
+                            );
+                          }}
+                        />
+                        <Typography.Text strong>
+                          适配 DeepSeek V4 官方渠道
+                        </Typography.Text>
+                      </Space>
+                    </div>
                     <div style={{ marginTop: 10, display: 'flex' }}>
                       <Space>
                         <Checkbox
