@@ -247,7 +247,9 @@ func convertClaudeThinkingToReasoning(bodyMap map[string]json.RawMessage) map[st
 		var thinkingMap map[string]any
 		if err := json.Unmarshal(raw, &thinkingMap); err == nil && thinkingMap != nil {
 			if t, ok := thinkingMap["type"].(string); ok && strings.TrimSpace(t) != "" {
-				reasoning["enabled"] = strings.EqualFold(strings.TrimSpace(t), "enabled")
+				if strings.EqualFold(strings.TrimSpace(t), "enabled") {
+					reasoning["enabled"] = true
+				}
 			}
 			budgetTokens := parseNumberToInt(thinkingMap["budget_tokens"])
 			if budgetTokens != 0 {
