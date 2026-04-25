@@ -15,6 +15,7 @@ import {
   IconHistogram,
   IconKey,
   IconLayers,
+  IconPulse,
   IconSetting,
   IconUser
 } from '@douyinfe/semi-icons';
@@ -46,6 +47,7 @@ const SiderBar = () => {
     setting: '/setting',
     about: '/about',
     detail: '/detail',
+    'model-health': '/model-health',
     pricing: '/pricing',
     task: '/task',
   };
@@ -77,6 +79,13 @@ const SiderBar = () => {
         itemKey: 'log',
         to: '/log',
         icon: <IconHistogram />,
+      },
+      {
+        text: '模型健康度',
+        itemKey: 'model-health',
+        to: '/model-health',
+        icon: <IconPulse />,
+        className: isAdmin() ? 'semi-navigation-item-normal' : 'tableHiddle',
       },
       {
         text: '数据看板',

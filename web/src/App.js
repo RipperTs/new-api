@@ -33,6 +33,7 @@ import { API, showError } from './helpers';
 
 const Home = lazy(() => import('./pages/Home'));
 const Detail = lazy(() => import('./pages/Detail'));
+const ModelHealth = lazy(() => import('./pages/ModelHealth'));
 const About = lazy(() => import('./pages/About'));
 
 function App() {
@@ -201,6 +202,16 @@ function App() {
             <PrivateRoute>
               <Suspense fallback={<Loading></Loading>}>
                 <Detail />
+              </Suspense>
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path='/model-health'
+          element={
+            <PrivateRoute>
+              <Suspense fallback={<Loading></Loading>}>
+                <ModelHealth />
               </Suspense>
             </PrivateRoute>
           }

@@ -55,11 +55,11 @@ export default defineConfig({
     port: 15177,
     proxy: {
       '/api': {
-        target: 'http://localhost:3800',
+        target: 'http://localhost:13800',
         changeOrigin: true,
       },
       '/pg': {
-        target: 'http://localhost:3800',
+        target: 'http://localhost:13800',
         changeOrigin: true,
       },
     },
