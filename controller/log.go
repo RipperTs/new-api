@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"fmt"
 	"net/http"
 	"one-api/common"
 	"one-api/model"
@@ -164,8 +165,37 @@ func GetLogsStat(c *gin.Context) {
 }
 
 func GetModelHealth(c *gin.Context) {
-	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
-	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+	startTimestamp, err := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
+	if err != nil || startTimestamp <= 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "起始时间无效",
+		})
+		return
+	}
+	endTimestamp, err := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+	if err != nil || endTimestamp <= 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "结束时间无效",
+		})
+		return
+	}
+	if endTimestamp <= startTimestamp {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "结束时间必须大于起始时间",
+		})
+		return
+	}
+	const maxModelHealthRangeSeconds = 90 * 86400
+	if endTimestamp-startTimestamp > maxModelHealthRangeSeconds {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": fmt.Sprintf("查询时间范围不能超过 %d 天", maxModelHealthRangeSeconds/86400),
+		})
+		return
+	}
 	modelName := c.Query("model_name")
 	channel, _ := strconv.Atoi(c.Query("channel"))
 	group := c.Query("group")

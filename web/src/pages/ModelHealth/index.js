@@ -108,6 +108,22 @@ const ModelHealth = () => {
     try {
       const localStartTimestamp = Date.parse(start_timestamp) / 1000;
       const localEndTimestamp = Date.parse(end_timestamp) / 1000;
+      if (!localStartTimestamp || Number.isNaN(localStartTimestamp)) {
+        showError('起始时间无效');
+        return;
+      }
+      if (!localEndTimestamp || Number.isNaN(localEndTimestamp)) {
+        showError('结束时间无效');
+        return;
+      }
+      if (localEndTimestamp <= localStartTimestamp) {
+        showError('结束时间必须大于起始时间');
+        return;
+      }
+      if (localEndTimestamp - localStartTimestamp > 90 * 86400) {
+        showError('查询时间范围不能超过 90 天');
+        return;
+      }
       let url = `/api/log/model_health?model_name=${model_name}&group=${group}&channel=${channel}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}`;
       url = encodeURI(url);
       const res = await API.get(url);
@@ -124,8 +140,9 @@ const ModelHealth = () => {
       }
     } catch (e) {
       showError('模型健康度数据加载失败');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const modelChartData = useMemo(() => {
