@@ -95,7 +95,7 @@ func PrepareClaudeCodeMessagesRequest(c *gin.Context, relayInfo *relaycommon.Rel
 		return nil, err
 	}
 	if shouldUseDeepSeekV4Compatibility(relayInfo) {
-		ensureDeepSeekV4ThinkingOptions(bodyMap)
+		applyDeepSeekV4ThinkingCompatibility(bodyMap)
 	}
 	if messagesRaw, ok := bodyMap["messages"]; ok {
 		patchedMessages := messagesRaw
@@ -695,6 +695,103 @@ func ensureDeepSeekV4ThinkingOptions(bodyMap map[string]json.RawMessage) {
 	if outputConfig := normalizeDeepSeekV4OutputConfig(bodyMap["output_config"]); outputConfig != nil {
 		bodyMap["output_config"] = outputConfig
 	}
+}
+
+func applyDeepSeekV4ThinkingCompatibility(bodyMap map[string]json.RawMessage) {
+	if hasIncompleteDeepSeekV4ThinkingHistory(bodyMap["messages"]) {
+		disableDeepSeekV4Thinking(bodyMap)
+		return
+	}
+	ensureDeepSeekV4ThinkingOptions(bodyMap)
+}
+
+func hasIncompleteDeepSeekV4ThinkingHistory(raw json.RawMessage) bool {
+	var messages []any
+	if err := json.Unmarshal(raw, &messages); err != nil {
+		return false
+	}
+	for _, msg := range messages {
+		m, ok := msg.(map[string]any)
+		if !ok || m["role"] != "assistant" {
+			continue
+		}
+		blocks, ok := m["content"].([]any)
+		if !ok {
+			continue
+		}
+		hasToolUse := false
+		hasThinking := false
+		for _, block := range blocks {
+			b, ok := block.(map[string]any)
+			if !ok {
+				continue
+			}
+			switch b["type"] {
+			case "thinking":
+				hasThinking = true
+			case "tool_use":
+				hasToolUse = true
+			}
+			if hasToolUse && hasThinking {
+				break
+			}
+		}
+		if hasToolUse && !hasThinking {
+			return true
+		}
+	}
+	return false
+}
+
+func disableDeepSeekV4Thinking(bodyMap map[string]json.RawMessage) {
+	if bodyMap == nil {
+		return
+	}
+	bodyMap["thinking"] = json.RawMessage(`{"type":"disabled"}`)
+	delete(bodyMap, "output_config")
+	delete(bodyMap, "context_management")
+	if stripped, changed := stripThinkingBlocksFromMessagesRaw(bodyMap["messages"]); changed {
+		bodyMap["messages"] = stripped
+	}
+}
+
+func stripThinkingBlocksFromMessagesRaw(raw json.RawMessage) (json.RawMessage, bool) {
+	var messages []any
+	if err := json.Unmarshal(raw, &messages); err != nil {
+		return raw, false
+	}
+	changed := false
+	for i := range messages {
+		msg, ok := messages[i].(map[string]any)
+		if !ok {
+			continue
+		}
+		blocks, ok := msg["content"].([]any)
+		if !ok {
+			continue
+		}
+		filtered := make([]any, 0, len(blocks))
+		for _, block := range blocks {
+			b, ok := block.(map[string]any)
+			if ok && b["type"] == "thinking" {
+				changed = true
+				continue
+			}
+			filtered = append(filtered, block)
+		}
+		if changed {
+			msg["content"] = filtered
+			messages[i] = msg
+		}
+	}
+	if !changed {
+		return raw, false
+	}
+	patched, err := json.Marshal(messages)
+	if err != nil {
+		return raw, false
+	}
+	return patched, true
 }
 
 func normalizeDeepSeekV4OutputConfig(raw json.RawMessage) json.RawMessage {
