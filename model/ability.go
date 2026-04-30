@@ -74,6 +74,39 @@ func getPriority(group string, model string, retry int) (int, error) {
 	return priorityToUse, nil
 }
 
+func getPriorityByTypes(group string, model string, retry int, allowedTypes []int) (int, error) {
+	if len(allowedTypes) == 0 {
+		return getPriority(group, model, retry)
+	}
+
+	trueVal := "1"
+	if common.UsingPostgreSQL {
+		trueVal = "true"
+	}
+
+	groupColWithTable := "abilities." + groupCol
+	var priorities []int
+	err := DB.Model(&Ability{}).
+		Joins("JOIN channels ON channels.id = abilities.channel_id").
+		Select("DISTINCT(abilities.priority)").
+		Where(groupColWithTable+" = ? and abilities.model = ? and abilities.enabled = "+trueVal, group, model).
+		Where("channels.type IN ?", allowedTypes).
+		Order("abilities.priority DESC").
+		Pluck("abilities.priority", &priorities).Error
+	if err != nil {
+		return 0, err
+	}
+
+	if len(priorities) == 0 {
+		return 0, errors.New("数据库一致性被破坏")
+	}
+
+	if retry >= len(priorities) {
+		return priorities[len(priorities)-1], nil
+	}
+	return priorities[retry], nil
+}
+
 func getChannelQuery(group string, model string, retry int) *gorm.DB {
 	trueVal := "1"
 	if common.UsingPostgreSQL {
@@ -151,11 +184,13 @@ func GetRandomSatisfiedChannelByTypes(group string, model string, retry int, all
 
 	if retry == 0 {
 		maxPrioritySubQuery := DB.Model(&Ability{}).
-			Select("MAX(priority)").
-			Where(groupColWithTable+" = ? and abilities.model = ? and abilities.enabled = "+trueVal, group, model)
+			Joins("JOIN channels ON channels.id = abilities.channel_id").
+			Select("MAX(abilities.priority)").
+			Where(groupColWithTable+" = ? and abilities.model = ? and abilities.enabled = "+trueVal, group, model).
+			Where("channels.type IN ?", allowedTypes)
 		channelQuery = channelQuery.Where("abilities.priority = (?)", maxPrioritySubQuery)
 	} else {
-		priority, err := getPriority(group, model, retry)
+		priority, err := getPriorityByTypes(group, model, retry, allowedTypes)
 		if err != nil {
 			common.SysError(fmt.Sprintf("Get priority failed: %s", err.Error()))
 		} else {
