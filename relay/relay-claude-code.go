@@ -94,10 +94,13 @@ func PrepareClaudeCodeMessagesRequest(c *gin.Context, relayInfo *relaycommon.Rel
 	if err := json.Unmarshal(jsonData, &bodyMap); err != nil {
 		return nil, err
 	}
+	if shouldUseDeepSeekV4Compatibility(relayInfo) {
+		ensureDeepSeekV4ThinkingOptions(bodyMap)
+	}
 	if messagesRaw, ok := bodyMap["messages"]; ok {
 		patchedMessages := messagesRaw
 		messagesChanged := false
-		if !shouldPreserveThinkingBlocks(relayInfo) {
+		if !shouldUseDeepSeekV4Compatibility(relayInfo) {
 			if normalized, changed := normalizeInvalidThinkingInMessagesRaw(patchedMessages); changed {
 				patchedMessages = normalized
 				messagesChanged = true
@@ -674,12 +677,55 @@ func claudeMessageText(content any) string {
 	return ""
 }
 
-func shouldPreserveThinkingBlocks(relayInfo *relaycommon.RelayInfo) bool {
+func shouldUseDeepSeekV4Compatibility(relayInfo *relaycommon.RelayInfo) bool {
 	if relayInfo == nil {
 		return false
 	}
 	mode, ok := relayInfo.ChannelSetting["compatibility_mode"].(string)
 	return ok && strings.EqualFold(strings.TrimSpace(mode), claudeCodeDeepSeekV4CompatibilityMode)
+}
+
+func ensureDeepSeekV4ThinkingOptions(bodyMap map[string]json.RawMessage) {
+	if bodyMap == nil {
+		return
+	}
+	if !hasClaudeRequestField(bodyMap, "thinking") {
+		bodyMap["thinking"] = json.RawMessage(`{"type":"enabled"}`)
+	}
+	if outputConfig := normalizeDeepSeekV4OutputConfig(bodyMap["output_config"]); outputConfig != nil {
+		bodyMap["output_config"] = outputConfig
+	}
+}
+
+func normalizeDeepSeekV4OutputConfig(raw json.RawMessage) json.RawMessage {
+	effort := "high"
+	if hasClaudeRequestRawField(raw) {
+		var outputConfig map[string]any
+		if err := json.Unmarshal(raw, &outputConfig); err == nil && outputConfig != nil {
+			if rawEffort, ok := outputConfig["effort"].(string); ok {
+				switch strings.ToLower(strings.TrimSpace(rawEffort)) {
+				case "high":
+					effort = "high"
+				case "max":
+					effort = "max"
+				}
+			}
+		}
+	}
+	return json.RawMessage(`{"effort":"` + effort + `"}`)
+}
+
+func hasClaudeRequestField(bodyMap map[string]json.RawMessage, key string) bool {
+	raw, ok := bodyMap[key]
+	if !ok {
+		return false
+	}
+	return hasClaudeRequestRawField(raw)
+}
+
+func hasClaudeRequestRawField(raw json.RawMessage) bool {
+	trimmed := strings.TrimSpace(string(raw))
+	return trimmed != "" && trimmed != "null"
 }
 
 func isLikelyClaudeThinkingSignature(signature string) bool {
