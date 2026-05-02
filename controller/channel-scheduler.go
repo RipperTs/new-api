@@ -82,11 +82,6 @@ func checkDisabledChannels() error {
 
 // StartChannelScheduler 启动渠道检查定时任务
 func StartChannelScheduler() {
-	if !common.AutomaticEnableChannelEnabled {
-		common.SysLog("自动启用渠道功能未开启，跳过启动渠道检查定时任务")
-		return
-	}
-
 	common.SysLog("启动渠道检查定时任务，每10分钟执行一次")
 
 	go func() {
