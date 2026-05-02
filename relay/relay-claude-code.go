@@ -608,10 +608,18 @@ func ClaudeCodeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithSta
 	}
 
 	var usage *dto.Usage
+	var upstreamErr *dto.OpenAIErrorWithStatusCode
 	if relayInfo.IsStream {
-		usage, err = streamClaudeCodePassthrough(c, httpResp, relayInfo)
+		usage, upstreamErr, err = streamClaudeCodePassthrough(c, httpResp, relayInfo)
 	} else {
 		usage, err = nonStreamClaudeCodePassthrough(c, httpResp, relayInfo)
+	}
+	if upstreamErr != nil {
+		returnPreConsumedQuota(c, relayInfo, userQuota, preConsumedQuota)
+		if !c.Writer.Written() {
+			writeClaudeMaybeStreamError(c, relayInfo, upstreamErr.StatusCode, mapOpenAIErrorTypeToClaude(upstreamErr.Error.Type), upstreamErr.Error.Message)
+		}
+		return nil
 	}
 	if err != nil {
 		returnPreConsumedQuota(c, relayInfo, userQuota, preConsumedQuota)
@@ -1036,13 +1044,56 @@ func patchMissingThinkingSignatureJSON(raw []byte) ([]byte, bool) {
 	return patched, true
 }
 
-func streamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*dto.Usage, error) {
-	service.SetEventStreamHeaders(c)
+func claudeCodeStreamError(resp *http.Response, claudeResp *claudecode.ClaudeResponse) *dto.OpenAIErrorWithStatusCode {
+	if claudeResp == nil {
+		return nil
+	}
+	errType := strings.TrimSpace(claudeResp.Error.Type)
+	if errType == "" && strings.EqualFold(strings.TrimSpace(claudeResp.Type), "error") {
+		errType = "upstream_error"
+	}
+	if errType == "" {
+		return nil
+	}
+	message := strings.TrimSpace(claudeResp.Error.Message)
+	if message == "" {
+		message = "upstream error"
+	}
+	statusCode := http.StatusBadGateway
+	if resp != nil && resp.StatusCode > 0 {
+		statusCode = resp.StatusCode
+	}
+	return &dto.OpenAIErrorWithStatusCode{
+		Error: dto.OpenAIError{
+			Message: message,
+			Type:    errType,
+			Code:    errType,
+		},
+		StatusCode: statusCode,
+		LocalError: false,
+	}
+}
+
+func writeClaudeCodeStreamLine(c *gin.Context, line string) error {
+	if !c.Writer.Written() {
+		service.SetEventStreamHeaders(c)
+	}
+	if _, err := c.Writer.Write([]byte(line + "\n")); err != nil {
+		return err
+	}
+	if flusher, ok := c.Writer.(http.Flusher); ok {
+		flusher.Flush()
+	}
+	return nil
+}
+
+func streamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*dto.Usage, *dto.OpenAIErrorWithStatusCode, error) {
 	defer resp.Body.Close()
 
 	usage := &dto.Usage{}
 	var responseText strings.Builder
 	sawAnyEvent := false
+	streamStarted := false
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
@@ -1051,9 +1102,7 @@ func streamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *rela
 		info.SetFirstResponseTime()
 		outputLine := line
 		parsedData := ""
-		if !strings.HasPrefix(line, "data:") {
-			parsedData = ""
-		} else {
+		if strings.HasPrefix(line, "data:") {
 			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 			parsedData = data
 			if data != "" && data != "[DONE]" {
@@ -1068,20 +1117,35 @@ func streamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *rela
 				}
 			}
 		}
-		if _, err := c.Writer.Write([]byte(outputLine + "\n")); err != nil {
-			return nil, err
-		}
-		if flusher, ok := c.Writer.(http.Flusher); ok {
-			flusher.Flush()
-		}
 		if parsedData == "" || parsedData == "[DONE]" {
+			if err := writeClaudeCodeStreamLine(c, outputLine); err != nil {
+				return nil, nil, err
+			}
+			streamStarted = true
 			continue
 		}
 		var claudeResp claudecode.ClaudeResponse
 		if err := json.Unmarshal([]byte(parsedData), &claudeResp); err != nil {
+			if err := writeClaudeCodeStreamLine(c, outputLine); err != nil {
+				return nil, nil, err
+			}
+			streamStarted = true
 			continue
 		}
 		sawAnyEvent = true
+		if upstreamErr := claudeCodeStreamError(resp, &claudeResp); upstreamErr != nil {
+			if streamStarted {
+				if err := writeClaudeCodeStreamLine(c, outputLine); err != nil {
+					return nil, nil, err
+				}
+				return nil, nil, fmt.Errorf("%s", upstreamErr.Error.Message)
+			}
+			return nil, upstreamErr, nil
+		}
+		if err := writeClaudeCodeStreamLine(c, outputLine); err != nil {
+			return nil, nil, err
+		}
+		streamStarted = true
 		if claudeResp.Type == "message_start" && claudeResp.Message != nil {
 			info.UpstreamModelName = claudeResp.Message.Model
 			usage.PromptTokens = claudeResp.Message.Usage.InputTokens
@@ -1093,11 +1157,11 @@ func streamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *rela
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// 流式响应结束但没有任何有效事件：通常是上游异常断流，避免客户端“无输出/静默”。
 	if !sawAnyEvent {
-		return nil, io.ErrUnexpectedEOF
+		return nil, nil, io.ErrUnexpectedEOF
 	}
 
 	if usage.PromptTokens == 0 {
@@ -1108,7 +1172,7 @@ func streamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *rela
 		usage.CompletionTokens = u.CompletionTokens
 		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 	}
-	return usage, nil
+	return usage, nil, nil
 }
 
 func nonStreamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*dto.Usage, error) {
