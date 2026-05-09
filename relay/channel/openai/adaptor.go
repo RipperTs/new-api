@@ -9,6 +9,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"one-api/common"
 	"one-api/dto"
 	"one-api/relay/channel"
@@ -229,6 +230,9 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 		}
 		return bytes.NewReader(jsonData), nil
 	} else {
+		if c.Query("model") != "" || c.GetHeader("X-Model") != "" {
+			return buildStreamingAudioRequest(c, request)
+		}
 		var requestBody bytes.Buffer
 		writer := multipart.NewWriter(&requestBody)
 
@@ -269,6 +273,92 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 	}
 }
 
+func buildStreamingAudioRequest(c *gin.Context, request dto.AudioRequest) (io.Reader, error) {
+	reader, err := c.Request.MultipartReader()
+	if err != nil {
+		return nil, err
+	}
+
+	pipeReader, pipeWriter := io.Pipe()
+	writer := multipart.NewWriter(pipeWriter)
+	c.Request.Header.Set("Content-Type", writer.FormDataContentType())
+
+	go func() {
+		closeErr := streamAudioMultipart(reader, writer, request)
+		if closeErr != nil {
+			_ = pipeWriter.CloseWithError(closeErr)
+			return
+		}
+		_ = pipeWriter.Close()
+	}()
+
+	return pipeReader, nil
+}
+
+func streamAudioMultipart(reader *multipart.Reader, writer *multipart.Writer, request dto.AudioRequest) error {
+	if err := writer.WriteField("model", request.Model); err != nil {
+		return err
+	}
+
+	hasResponseFormat := false
+	for {
+		part, err := reader.NextPart()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if part.FormName() == "" || part.FormName() == "model" {
+			_ = part.Close()
+			continue
+		}
+		if part.FormName() == "response_format" {
+			hasResponseFormat = true
+		}
+
+		target, err := createPart(writer, part)
+		if err != nil {
+			_ = part.Close()
+			return err
+		}
+		if _, err = io.Copy(target, part); err != nil {
+			_ = part.Close()
+			return err
+		}
+		if err = part.Close(); err != nil {
+			return err
+		}
+	}
+
+	if !hasResponseFormat && request.ResponseFormat != "" {
+		if err := writer.WriteField("response_format", request.ResponseFormat); err != nil {
+			return err
+		}
+	}
+
+	return writer.Close()
+}
+
+func createPart(writer *multipart.Writer, part *multipart.Part) (io.Writer, error) {
+	if part.FileName() == "" {
+		return writer.CreateFormField(part.FormName())
+	}
+
+	header := make(textproto.MIMEHeader)
+	header.Set("Content-Disposition", fmt.Sprintf(`form-data; name="%s"; filename="%s"`, escapeQuotes(part.FormName()), escapeQuotes(part.FileName())))
+	contentType := part.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	header.Set("Content-Type", contentType)
+	return writer.CreatePart(header)
+}
+
+func escapeQuotes(value string) string {
+	return strings.NewReplacer("\\", "\\\\", `"`, "\\\"").Replace(value)
+}
+
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
 	return request, nil
 }
@@ -298,7 +388,11 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	case constant.RelayModeAudioTranslation:
 		fallthrough
 	case constant.RelayModeAudioTranscription:
-		err, usage = OpenaiSTTHandler(c, resp, info, a.ResponseFormat)
+		if c.Query("model") != "" || c.GetHeader("X-Model") != "" {
+			err, usage = OpenaiSTTStreamProxyHandler(c, resp, info)
+		} else {
+			err, usage = OpenaiSTTHandler(c, resp, info, a.ResponseFormat)
+		}
 	case constant.RelayModeImagesGenerations:
 		err, usage = OpenaiTTSHandler(c, resp, info)
 	default:

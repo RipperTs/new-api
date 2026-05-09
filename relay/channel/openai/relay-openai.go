@@ -433,6 +433,38 @@ func OpenaiSTTHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rel
 	return nil, usage
 }
 
+func OpenaiSTTStreamProxyHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*dto.OpenAIErrorWithStatusCode, *dto.Usage) {
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return service.OpenAIErrorWrapper(err, "read_response_body_failed", http.StatusInternalServerError), nil
+	}
+	err = resp.Body.Close()
+	if err != nil {
+		return service.OpenAIErrorWrapper(err, "close_response_body_failed", http.StatusInternalServerError), nil
+	}
+
+	resp.Body = io.NopCloser(bytes.NewBuffer(responseBody))
+	for k, v := range resp.Header {
+		if len(v) > 0 {
+			c.Writer.Header().Set(k, v[0])
+		}
+	}
+	c.Writer.WriteHeader(resp.StatusCode)
+	_, err = io.Copy(c.Writer, resp.Body)
+	if err != nil {
+		return service.OpenAIErrorWrapper(err, "copy_response_body_failed", http.StatusInternalServerError), nil
+	}
+	err = resp.Body.Close()
+	if err != nil {
+		return service.OpenAIErrorWrapper(err, "close_response_body_failed", http.StatusInternalServerError), nil
+	}
+
+	return nil, &dto.Usage{
+		PromptTokens: info.PromptTokens,
+		TotalTokens:  info.PromptTokens,
+	}
+}
+
 func countAudioTokens(c *gin.Context) (int, error) {
 	body, err := common.GetRequestBody(c)
 	if err != nil {

@@ -206,7 +206,11 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 		if strings.HasPrefix(c.Request.URL.Path, "/v1/audio/speech") {
 			modelRequest.Model = common.GetStringIfEmpty(modelRequest.Model, "tts-1")
 		} else if strings.HasPrefix(c.Request.URL.Path, "/v1/audio/translations") {
-			modelRequest.Model = common.GetStringIfEmpty(modelRequest.Model, c.PostForm("model"))
+			modelRequest.Model = common.GetStringIfEmpty(modelRequest.Model, c.Query("model"))
+			modelRequest.Model = common.GetStringIfEmpty(modelRequest.Model, c.GetHeader("X-Model"))
+			if modelRequest.Model == "" {
+				modelRequest.Model = c.PostForm("model")
+			}
 			modelRequest.Model = common.GetStringIfEmpty(modelRequest.Model, "whisper-1")
 			relayMode = relayconstant.RelayModeAudioTranslation
 		} else if strings.HasPrefix(c.Request.URL.Path, "/v1/audio/transcriptions") {
