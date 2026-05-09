@@ -308,6 +308,9 @@ func shouldRetry(c *gin.Context, openaiErr *dto.OpenAIErrorWithStatusCode, retry
 	if _, ok := c.Get("specific_channel_id"); ok {
 		return false
 	}
+	if relayconstant.Path2RelayMode(c.Request.URL.Path) == relayconstant.RelayModeAudioTranscription {
+		return false
+	}
 	if openaiErr.StatusCode == http.StatusTooManyRequests {
 		return true
 	}

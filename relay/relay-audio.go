@@ -17,7 +17,10 @@ import (
 
 func getAndValidAudioRequest(c *gin.Context, info *relaycommon.RelayInfo) (*dto.AudioRequest, error) {
 	audioRequest := &dto.AudioRequest{}
-	err := common.UnmarshalBodyReusable(c, audioRequest)
+	var err error
+	if info.RelayMode == relayconstant.RelayModeAudioSpeech {
+		err = common.UnmarshalBodyReusable(c, audioRequest)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -33,19 +36,23 @@ func getAndValidAudioRequest(c *gin.Context, info *relaycommon.RelayInfo) (*dto.
 			}
 		}
 	default:
-		err = c.Request.ParseForm()
-		if err != nil {
-			return nil, err
-		}
-		formData := c.Request.PostForm
-		if audioRequest.Model == "" {
+		audioRequest.Model = c.Query("model")
+		audioRequest.Model = common.GetStringIfEmpty(audioRequest.Model, c.GetHeader("X-Model"))
+		if audioRequest.Model != "" {
+			audioRequest.ResponseFormat = c.Query("response_format")
+			audioRequest.ResponseFormat = common.GetStringIfEmpty(audioRequest.ResponseFormat, c.GetHeader("X-Response-Format"))
+		} else {
+			err = c.Request.ParseForm()
+			if err != nil {
+				return nil, err
+			}
+			formData := c.Request.PostForm
 			audioRequest.Model = formData.Get("model")
+			audioRequest.ResponseFormat = formData.Get("response_format")
 		}
-
 		if audioRequest.Model == "" {
 			return nil, errors.New("model is required")
 		}
-		audioRequest.ResponseFormat = formData.Get("response_format")
 		if audioRequest.ResponseFormat == "" {
 			audioRequest.ResponseFormat = "json"
 		}
@@ -70,8 +77,8 @@ func AudioHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) {
 			return service.OpenAIErrorWrapper(err, "count_audio_token_failed", http.StatusInternalServerError)
 		}
 		preConsumedTokens = promptTokens
-		relayInfo.PromptTokens = promptTokens
 	}
+	relayInfo.PromptTokens = preConsumedTokens
 
 	modelRatio := common.GetModelRatio(audioRequest.Model)
 	groupRatio := setting.GetGroupRatio(relayInfo.Group)
