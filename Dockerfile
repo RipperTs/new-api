@@ -1,7 +1,10 @@
-FROM node:18.18-alpine AS builder
+FROM node:22-alpine AS builder
 
 WORKDIR /build
-RUN apk add --no-cache python3 make g++ && npm install -g pnpm
+ENV PNPM_VERSION=11.0.9
+RUN apk add --no-cache python3 make g++ \
+    && corepack enable \
+    && corepack prepare pnpm@${PNPM_VERSION} --activate
 COPY web/package.json .
 COPY web/pnpm-lock.yaml .
 RUN pnpm install --frozen-lockfile --ignore-scripts
