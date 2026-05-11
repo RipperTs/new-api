@@ -594,8 +594,7 @@ func ClaudeCodeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithSta
 	resp, err := adaptor.DoRequest(c, relayInfo, bytes.NewBuffer(jsonData))
 	if err != nil {
 		returnPreConsumedQuota(c, relayInfo, userQuota, preConsumedQuota)
-		writeClaudeMaybeStreamError(c, relayInfo, http.StatusInternalServerError, "api_error", err.Error())
-		return nil
+		return service.OpenAIErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
 	}
 
 	httpResp := resp.(*http.Response)
@@ -1248,6 +1247,31 @@ func writeClaudeMaybeStreamError(c *gin.Context, info *relaycommon.RelayInfo, st
 		return
 	}
 	writeClaudeError(c, status, errType, message)
+}
+
+func WriteClaudeMessagesError(c *gin.Context, openaiErr *dto.OpenAIErrorWithStatusCode) {
+	if openaiErr == nil {
+		return
+	}
+	info := &relaycommon.RelayInfo{IsStream: isClaudeMessagesStreamRequest(c)}
+	writeClaudeMaybeStreamError(c, info, openaiErr.StatusCode, mapOpenAIErrorTypeToClaude(openaiErr.Error.Type), openaiErr.Error.Message)
+}
+
+func isClaudeMessagesStreamRequest(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	var req struct {
+		Stream bool `json:"stream"`
+	}
+	body, err := common.GetRequestBody(c)
+	if err != nil {
+		return false
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return false
+	}
+	return req.Stream
 }
 
 func mapOpenAIErrorTypeToClaude(t string) string {

@@ -142,6 +142,18 @@ func Relay(c *gin.Context) {
 	}
 
 	if openaiErr != nil {
+		if relayMode == relayconstant.RelayModeClaudeMessages {
+			if openaiErr.StatusCode == http.StatusTooManyRequests {
+				// 429 场景下保留 usage_limit_reached 等上游信息，其它 429 仍返回通用提示。
+				if !strings.EqualFold(strings.TrimSpace(openaiErr.Error.Type), "usage_limit_reached") {
+					openaiErr.Error.Message = "当前分组上游负载已饱和，请稍后再试"
+				}
+			}
+			openaiErr.Error.Message = common.MessageWithRequestId(openaiErr.Error.Message, requestId)
+			relay.WriteClaudeMessagesError(c, openaiErr)
+			return
+		}
+
 		if relayMode == relayconstant.RelayModeCodexCLI {
 			// Codex CLI 的 /responses/compact 为非流式 JSON；错误也按 JSON 返回（避免客户端误判 SSE）。
 			if strings.HasSuffix(strings.TrimSpace(c.Request.URL.Path), "/responses/compact") {
