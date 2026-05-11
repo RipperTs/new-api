@@ -146,8 +146,7 @@ func OpenRouterClaudeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorW
 	resp, err := doOpenRouterChatCompletionsRequest(c, relayInfo, jsonData)
 	if err != nil {
 		returnPreConsumedQuota(c, relayInfo, userQuota, preConsumedQuota)
-		writeClaudeMaybeStreamError(c, relayInfo, http.StatusInternalServerError, "api_error", err.Error())
-		return nil
+		return service.OpenAIErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
 	}
 
 	statusCodeMappingStr := c.GetString("status_code_mapping")
@@ -168,6 +167,9 @@ func OpenRouterClaudeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorW
 		returnPreConsumedQuota(c, relayInfo, userQuota, preConsumedQuota)
 		if common.IsClientDisconnectError(err) {
 			return nil
+		}
+		if !c.Writer.Written() {
+			return service.OpenAIErrorWrapper(err, "upstream_response_failed", http.StatusInternalServerError)
 		}
 		writeClaudeMaybeStreamError(c, relayInfo, http.StatusInternalServerError, "api_error", err.Error())
 		return nil
@@ -843,8 +845,6 @@ func buildOpenRouterChatCompletionsURL(baseURL string) string {
 
 func streamOpenRouterChatToClaude(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*dto.Usage, error) {
 	defer resp.Body.Close()
-	service.SetEventStreamHeaders(c)
-	c.Writer.WriteHeader(http.StatusOK)
 
 	usage := &dto.Usage{}
 	var responseText strings.Builder
@@ -1491,6 +1491,10 @@ func writeClaudeStreamEvent(c *gin.Context, event string, payload any) error {
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return err
+	}
+	if !c.Writer.Written() {
+		service.SetEventStreamHeaders(c)
+		c.Writer.WriteHeader(http.StatusOK)
 	}
 	if event != "" {
 		if _, err = c.Writer.Write([]byte("event: " + event + "\n")); err != nil {

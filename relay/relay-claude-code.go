@@ -626,6 +626,9 @@ func ClaudeCodeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithSta
 		if common.IsClientDisconnectError(err) {
 			return nil
 		}
+		if !c.Writer.Written() {
+			return service.OpenAIErrorWrapper(err, "upstream_response_failed", http.StatusInternalServerError)
+		}
 		writeClaudeMaybeStreamError(c, relayInfo, http.StatusInternalServerError, "api_error", err.Error())
 		return nil
 	}
