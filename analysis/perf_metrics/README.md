@@ -14,6 +14,20 @@ export DB_PASSWORD='***'
 python3 analysis/perf_metrics/analyze_perf_metrics.py --days 30
 ```
 
+排除指定模型：
+
+```bash
+python3 analysis/perf_metrics/analyze_perf_metrics.py --days 30 --exclude-model bge-reranker-base
+```
+
+排除多个模型，支持多次传入或逗号分隔：
+
+```bash
+python3 analysis/perf_metrics/analyze_perf_metrics.py --days 30 \
+  --exclude-model bge-reranker-base \
+  --exclude-model text-embedding-xxx,another-model
+```
+
 结果会输出到 `analysis/perf_metrics/reports/`，包含：
 
 - `perf_metrics_*.json`：完整指标
@@ -28,4 +42,3 @@ python3 analysis/perf_metrics/analyze_perf_metrics.py --days 30
 - 上下文：`prompt_tokens`
 - TPS：按秒聚合的 Tokens 峰值
 - RPM / TPM：按分钟聚合的请求数和 Tokens
-

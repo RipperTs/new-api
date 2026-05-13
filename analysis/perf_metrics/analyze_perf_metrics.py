@@ -28,7 +28,27 @@ def get_args() -> argparse.Namespace:
     parser.add_argument("--days", type=int, default=30)
     parser.add_argument("--output-dir", default="analysis/perf_metrics/reports")
     parser.add_argument("--top", type=int, default=10)
-    return parser.parse_args()
+    parser.add_argument(
+        "--exclude-model",
+        action="append",
+        default=[],
+        help="排除指定模型，支持多次传入或逗号分隔，例如 --exclude-model bge-reranker-base,xxx",
+    )
+    args = parser.parse_args()
+    args.exclude_model = parse_excluded_models(args.exclude_model)
+    return args
+
+
+def parse_excluded_models(values: List[str]) -> List[str]:
+    models = []
+    seen = set()
+    for value in values:
+        for item in value.split(","):
+            model = item.strip()
+            if model and model not in seen:
+                models.append(model)
+                seen.add(model)
+    return models
 
 
 def connect(args: argparse.Namespace):
@@ -57,16 +77,35 @@ def fetch_all(cur, sql: str, params: tuple = ()) -> List[Dict[str, Any]]:
     return list(cur.fetchall())
 
 
-def percentile_nearest(cur, start_ts: int, percentile: float, positive_tokens_only: bool = False) -> Optional[int]:
+def model_filter(excluded_models: List[str]) -> tuple[str, tuple]:
+    if not excluded_models:
+        return "", ()
+    placeholders = ", ".join(["%s"] * len(excluded_models))
+    return f"AND (model_name IS NULL OR model_name NOT IN ({placeholders}))", tuple(excluded_models)
+
+
+def base_where(excluded_models: List[str], positive_tokens_only: bool = False) -> tuple[str, tuple]:
     positive_filter = "AND (prompt_tokens + completion_tokens) > 0" if positive_tokens_only else ""
+    exclude_filter, exclude_params = model_filter(excluded_models)
+    return f"WHERE type = %s AND created_at >= %s {positive_filter} {exclude_filter}", exclude_params
+
+
+def percentile_nearest(
+    cur,
+    start_ts: int,
+    percentile: float,
+    excluded_models: List[str],
+    positive_tokens_only: bool = False,
+) -> Optional[int]:
+    where_sql, filter_params = base_where(excluded_models, positive_tokens_only)
     count_row = fetch_one(
         cur,
         f"""
         SELECT COUNT(*) AS cnt
         FROM logs
-        WHERE type = %s AND created_at >= %s {positive_filter}
+        {where_sql}
         """,
-        (LOG_TYPE_CONSUME, start_ts),
+        (LOG_TYPE_CONSUME, start_ts) + filter_params,
     )
     count = int(count_row.get("cnt") or 0)
     if count == 0:
@@ -78,11 +117,11 @@ def percentile_nearest(cur, start_ts: int, percentile: float, positive_tokens_on
         f"""
         SELECT prompt_tokens
         FROM logs
-        WHERE type = %s AND created_at >= %s {positive_filter}
+        {where_sql}
         ORDER BY prompt_tokens
         LIMIT 1 OFFSET %s
         """,
-        (LOG_TYPE_CONSUME, start_ts, offset),
+        (LOG_TYPE_CONSUME, start_ts) + filter_params + (offset,),
     )
     return int(row["prompt_tokens"]) if row else None
 
@@ -105,8 +144,13 @@ def normalize_row(row: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
-def fetch_context(cur, start_ts: int, positive_tokens_only: bool = False) -> Dict[str, Any]:
-    positive_filter = "AND (prompt_tokens + completion_tokens) > 0" if positive_tokens_only else ""
+def fetch_context(
+    cur,
+    start_ts: int,
+    excluded_models: List[str],
+    positive_tokens_only: bool = False,
+) -> Dict[str, Any]:
+    where_sql, filter_params = base_where(excluded_models, positive_tokens_only)
     context = fetch_one(
         cur,
         f"""
@@ -117,16 +161,16 @@ def fetch_context(cur, start_ts: int, positive_tokens_only: bool = False) -> Dic
             MAX(prompt_tokens + completion_tokens) AS max_total_tokens,
             AVG(prompt_tokens + completion_tokens) AS avg_total_tokens
         FROM logs
-        WHERE type = %s AND created_at >= %s {positive_filter}
+        {where_sql}
         """,
-        (LOG_TYPE_CONSUME, start_ts),
+        (LOG_TYPE_CONSUME, start_ts) + filter_params,
     )
     context.update(
         {
-            "p50_context_tokens": percentile_nearest(cur, start_ts, 0.50, positive_tokens_only),
-            "p90_context_tokens": percentile_nearest(cur, start_ts, 0.90, positive_tokens_only),
-            "p95_context_tokens": percentile_nearest(cur, start_ts, 0.95, positive_tokens_only),
-            "p99_context_tokens": percentile_nearest(cur, start_ts, 0.99, positive_tokens_only),
+            "p50_context_tokens": percentile_nearest(cur, start_ts, 0.50, excluded_models, positive_tokens_only),
+            "p90_context_tokens": percentile_nearest(cur, start_ts, 0.90, excluded_models, positive_tokens_only),
+            "p95_context_tokens": percentile_nearest(cur, start_ts, 0.95, excluded_models, positive_tokens_only),
+            "p99_context_tokens": percentile_nearest(cur, start_ts, 0.99, excluded_models, positive_tokens_only),
         }
     )
     context["max_context_k"] = to_k(context.get("max_context_tokens"))
@@ -138,31 +182,36 @@ def fetch_context(cur, start_ts: int, positive_tokens_only: bool = False) -> Dic
     return normalize_row(context)
 
 
-def fetch_request_peaks(cur, start_ts: int, positive_tokens_only: bool = False) -> Dict[str, Any]:
-    positive_filter = "AND (prompt_tokens + completion_tokens) > 0" if positive_tokens_only else ""
+def fetch_request_peaks(
+    cur,
+    start_ts: int,
+    excluded_models: List[str],
+    positive_tokens_only: bool = False,
+) -> Dict[str, Any]:
+    where_sql, filter_params = base_where(excluded_models, positive_tokens_only)
     peak_rps = fetch_one(
         cur,
         f"""
         SELECT created_at AS ts, COUNT(*) AS requests
         FROM logs
-        WHERE type = %s AND created_at >= %s {positive_filter}
+        {where_sql}
         GROUP BY created_at
         ORDER BY requests DESC
         LIMIT 1
         """,
-        (LOG_TYPE_CONSUME, start_ts),
+        (LOG_TYPE_CONSUME, start_ts) + filter_params,
     )
     peak_rpm = fetch_one(
         cur,
         f"""
         SELECT (created_at DIV 60) * 60 AS minute_ts, COUNT(*) AS rpm
         FROM logs
-        WHERE type = %s AND created_at >= %s {positive_filter}
+        {where_sql}
         GROUP BY minute_ts
         ORDER BY rpm DESC
         LIMIT 1
         """,
-        (LOG_TYPE_CONSUME, start_ts),
+        (LOG_TYPE_CONSUME, start_ts) + filter_params,
     )
     if peak_rps.get("ts"):
         peak_rps["time"] = datetime.fromtimestamp(int(peak_rps["ts"])).isoformat(sep=" ")
@@ -174,14 +223,15 @@ def fetch_request_peaks(cur, start_ts: int, positive_tokens_only: bool = False) 
     }
 
 
-def analyze(conn, days: int, top: int) -> Dict[str, Any]:
+def analyze(conn, days: int, top: int, excluded_models: List[str]) -> Dict[str, Any]:
     with conn.cursor() as cur:
         start_row = fetch_one(cur, "SELECT UNIX_TIMESTAMP(NOW() - INTERVAL %s DAY) AS start_ts", (days,))
         start_ts = int(start_row["start_ts"])
+        where_sql, filter_params = base_where(excluded_models)
 
         overview = fetch_one(
             cur,
-            """
+            f"""
             SELECT
                 COUNT(*) AS request_count,
                 MIN(created_at) AS first_ts,
@@ -193,17 +243,17 @@ def analyze(conn, days: int, top: int) -> Dict[str, Any]:
                 AVG(use_time) AS avg_use_time,
                 MAX(use_time) AS max_use_time
             FROM logs
-            WHERE type = %s AND created_at >= %s
+            {where_sql}
             """,
-            (LOG_TYPE_CONSUME, start_ts),
+            (LOG_TYPE_CONSUME, start_ts) + filter_params,
         )
 
-        context = fetch_context(cur, start_ts)
-        positive_context = fetch_context(cur, start_ts, positive_tokens_only=True)
+        context = fetch_context(cur, start_ts, excluded_models)
+        positive_context = fetch_context(cur, start_ts, excluded_models, positive_tokens_only=True)
 
         peak_second = fetch_one(
             cur,
-            """
+            f"""
             SELECT
                 created_at AS ts,
                 COUNT(*) AS requests,
@@ -211,17 +261,17 @@ def analyze(conn, days: int, top: int) -> Dict[str, Any]:
                 SUM(prompt_tokens) AS prompt_tokens,
                 SUM(completion_tokens) AS completion_tokens
             FROM logs
-            WHERE type = %s AND created_at >= %s
+            {where_sql}
             GROUP BY created_at
             ORDER BY tokens DESC
             LIMIT 1
             """,
-            (LOG_TYPE_CONSUME, start_ts),
+            (LOG_TYPE_CONSUME, start_ts) + filter_params,
         )
 
         peak_minute = fetch_one(
             cur,
-            """
+            f"""
             SELECT
                 (created_at DIV 60) * 60 AS minute_ts,
                 COUNT(*) AS rpm,
@@ -229,20 +279,20 @@ def analyze(conn, days: int, top: int) -> Dict[str, Any]:
                 SUM(prompt_tokens) AS prompt_tpm,
                 SUM(completion_tokens) AS completion_tpm
             FROM logs
-            WHERE type = %s AND created_at >= %s
+            {where_sql}
             GROUP BY minute_ts
             ORDER BY tpm DESC
             LIMIT 1
             """,
-            (LOG_TYPE_CONSUME, start_ts),
+            (LOG_TYPE_CONSUME, start_ts) + filter_params,
         )
 
-        request_peaks = fetch_request_peaks(cur, start_ts)
-        positive_request_peaks = fetch_request_peaks(cur, start_ts, positive_tokens_only=True)
+        request_peaks = fetch_request_peaks(cur, start_ts, excluded_models)
+        positive_request_peaks = fetch_request_peaks(cur, start_ts, excluded_models, positive_tokens_only=True)
 
         by_model = fetch_all(
             cur,
-            """
+            f"""
             SELECT
                 model_name,
                 COUNT(*) AS requests,
@@ -253,17 +303,17 @@ def analyze(conn, days: int, top: int) -> Dict[str, Any]:
                 AVG(prompt_tokens) AS avg_context_tokens,
                 AVG(use_time) AS avg_use_time
             FROM logs
-            WHERE type = %s AND created_at >= %s
+            {where_sql}
             GROUP BY model_name
             ORDER BY total_tokens DESC
             LIMIT %s
             """,
-            (LOG_TYPE_CONSUME, start_ts, top),
+            (LOG_TYPE_CONSUME, start_ts) + filter_params + (top,),
         )
 
         by_channel = fetch_all(
             cur,
-            """
+            f"""
             SELECT
                 channel_id,
                 COUNT(*) AS requests,
@@ -274,12 +324,12 @@ def analyze(conn, days: int, top: int) -> Dict[str, Any]:
                 AVG(prompt_tokens) AS avg_context_tokens,
                 AVG(use_time) AS avg_use_time
             FROM logs
-            WHERE type = %s AND created_at >= %s
+            {where_sql}
             GROUP BY channel_id
             ORDER BY total_tokens DESC
             LIMIT %s
             """,
-            (LOG_TYPE_CONSUME, start_ts, top),
+            (LOG_TYPE_CONSUME, start_ts) + filter_params + (top,),
         )
 
     for row in by_model + by_channel:
@@ -300,6 +350,7 @@ def analyze(conn, days: int, top: int) -> Dict[str, Any]:
     return {
         "generated_at": datetime.now().isoformat(sep=" "),
         "days": days,
+        "excluded_models": excluded_models,
         "start_ts": start_ts,
         "overview": overview,
         "context": context,
@@ -326,6 +377,7 @@ def write_outputs(report: Dict[str, Any], output_dir: str) -> Dict[str, str]:
     json_path.write_text(json.dumps(report, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
 
     rows = [
+        ("excluded_models", ",".join(report.get("excluded_models", []))),
         ("request_count", report["overview"].get("request_count")),
         ("total_tokens", report["overview"].get("total_tokens")),
         ("prompt_tokens", report["overview"].get("prompt_tokens")),
@@ -366,6 +418,8 @@ def print_summary(report: Dict[str, Any], paths: Dict[str, str]) -> None:
     positive_peaks = report["positive_token_request_peaks"]
 
     print("最近 {days} 天性能指标".format(days=report["days"]))
+    if report.get("excluded_models"):
+        print("已排除模型: " + ", ".join(report["excluded_models"]))
     print(f"时间范围: {overview.get('first_time')} ~ {overview.get('last_time')}")
     print(f"请求数: {overview.get('request_count'):,}")
     print(f"总 Tokens: {overview.get('total_tokens'):,}")
@@ -398,7 +452,7 @@ def main() -> None:
     args = get_args()
     conn = connect(args)
     try:
-        report = analyze(conn, args.days, args.top)
+        report = analyze(conn, args.days, args.top, args.exclude_model)
     finally:
         conn.close()
 
