@@ -9,4 +9,5 @@ docs
 nginx
 out
 /web/node_modules
-
+analysis/perf_metrics/reports
+performance_analysis_*.md

@@ -10,3 +10,5 @@ web/dist
 .env
 one-api
 .DS_Store
+analysis/perf_metrics/reports
+performance_analysis_*.md
