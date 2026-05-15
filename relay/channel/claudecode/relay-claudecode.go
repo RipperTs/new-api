@@ -543,12 +543,13 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 					Type:    strings.TrimSpace(claudeResponse.Error.Type),
 					Code:    strings.TrimSpace(claudeResponse.Error.Type),
 				},
-				StatusCode: resp.StatusCode,
+				StatusCode: claudeCodeStreamErrorStatusCode(resp, claudeResponse.Error.Type),
 				LocalError: false,
 			}
 			if strings.TrimSpace(openaiErr.Error.Type) == "" {
 				openaiErr.Error.Type = "upstream_error"
 				openaiErr.Error.Code = "upstream_error"
+				openaiErr.StatusCode = claudeCodeStreamErrorStatusCode(resp, openaiErr.Error.Type)
 			}
 			if strings.TrimSpace(openaiErr.Error.Message) == "" {
 				openaiErr.Error.Message = "upstream error"
@@ -559,6 +560,7 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 					"error": openaiErr.Error,
 				})
 				service.Done(c)
+				return nil, usage
 			}
 			return openaiErr, nil
 		}
@@ -667,6 +669,26 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 	service.Done(c)
 	resp.Body.Close()
 	return nil, usage
+}
+
+func claudeCodeStreamErrorStatusCode(resp *http.Response, errType string) int {
+	if resp != nil && resp.StatusCode >= http.StatusBadRequest {
+		return resp.StatusCode
+	}
+	switch strings.ToLower(strings.TrimSpace(errType)) {
+	case "rate_limit_error", "rate_limit_exceeded", "usage_limit_reached", "overloaded_error":
+		return http.StatusTooManyRequests
+	case "invalid_request_error":
+		return http.StatusBadRequest
+	case "authentication_error":
+		return http.StatusUnauthorized
+	case "permission_error":
+		return http.StatusForbidden
+	case "not_found_error":
+		return http.StatusNotFound
+	default:
+		return http.StatusBadGateway
+	}
 }
 
 func ClaudeHandler(c *gin.Context, resp *http.Response, requestMode int, info *relaycommon.RelayInfo) (*dto.OpenAIErrorWithStatusCode, *dto.Usage) {

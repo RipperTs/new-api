@@ -49,8 +49,7 @@ func IsClientDisconnectMessage(msg string) bool {
 	}
 	return strings.Contains(m, "broken pipe") ||
 		strings.Contains(m, "connection reset by peer") ||
-		strings.Contains(m, "client disconnected") ||
-		strings.Contains(m, "context canceled")
+		strings.Contains(m, "client disconnected")
 }
 
 // IsUpstreamTransportFailureMessage 判断是否为网关/代理层的转发失败（通常还未拿到上游响应头），
@@ -65,5 +64,6 @@ func IsUpstreamTransportFailureMessage(msg string) bool {
 		strings.Contains(m, "remote connection failure") ||
 		strings.Contains(m, "transport failure reason") ||
 		strings.Contains(m, "delayed connect error") ||
-		strings.Contains(m, "connection refused")
+		strings.Contains(m, "connection refused") ||
+		strings.Contains(m, "context canceled")
 }

@@ -364,6 +364,10 @@ func processChannelError(requestId string, group string, channelId int, channelT
 		common.LogInfo(ctx, fmt.Sprintf("relay aborted (channel #%d, status code: %d): %s", channelId, err.StatusCode, err.Error.Message))
 		return
 	}
+	if common.IsUpstreamTransportFailureMessage(err.Error.Message) {
+		common.LogInfo(ctx, fmt.Sprintf("relay transport failure (channel #%d, status code: %d): %s", channelId, err.StatusCode, err.Error.Message))
+		return
+	}
 	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
 	// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
 	common.LogError(ctx, fmt.Sprintf("relay error (channel #%d, status code: %d): %s", channelId, err.StatusCode, err.Error.Message))

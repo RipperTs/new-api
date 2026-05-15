@@ -615,10 +615,12 @@ func ClaudeCodeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithSta
 	}
 	if upstreamErr != nil {
 		returnPreConsumedQuota(c, relayInfo, userQuota, preConsumedQuota)
-		if !c.Writer.Written() {
+		if c.Writer.Written() {
 			writeClaudeMaybeStreamError(c, relayInfo, upstreamErr.StatusCode, mapOpenAIErrorTypeToClaude(upstreamErr.Error.Type), upstreamErr.Error.Message)
+			return nil
 		}
-		return nil
+		service.ResetStatusCode(upstreamErr, statusCodeMappingStr)
+		return upstreamErr
 	}
 	if err != nil {
 		returnPreConsumedQuota(c, relayInfo, userQuota, preConsumedQuota)
@@ -1061,10 +1063,7 @@ func claudeCodeStreamError(resp *http.Response, claudeResp *claudecode.ClaudeRes
 	if message == "" {
 		message = "upstream error"
 	}
-	statusCode := http.StatusBadGateway
-	if resp != nil && resp.StatusCode > 0 {
-		statusCode = resp.StatusCode
-	}
+	statusCode := claudeCodeStreamErrorStatusCode(resp, errType)
 	return &dto.OpenAIErrorWithStatusCode{
 		Error: dto.OpenAIError{
 			Message: message,
@@ -1073,6 +1072,26 @@ func claudeCodeStreamError(resp *http.Response, claudeResp *claudecode.ClaudeRes
 		},
 		StatusCode: statusCode,
 		LocalError: false,
+	}
+}
+
+func claudeCodeStreamErrorStatusCode(resp *http.Response, errType string) int {
+	if resp != nil && resp.StatusCode >= http.StatusBadRequest {
+		return resp.StatusCode
+	}
+	switch strings.ToLower(strings.TrimSpace(errType)) {
+	case "rate_limit_error", "rate_limit_exceeded", "usage_limit_reached", "overloaded_error":
+		return http.StatusTooManyRequests
+	case "invalid_request_error":
+		return http.StatusBadRequest
+	case "authentication_error":
+		return http.StatusUnauthorized
+	case "permission_error":
+		return http.StatusForbidden
+	case "not_found_error":
+		return http.StatusNotFound
+	default:
+		return http.StatusBadGateway
 	}
 }
 
@@ -1094,6 +1113,7 @@ func streamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *rela
 
 	usage := &dto.Usage{}
 	var responseText strings.Builder
+	pendingLines := make([]string, 0, 2)
 	sawAnyEvent := false
 	streamStarted := false
 
@@ -1120,6 +1140,12 @@ func streamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *rela
 			}
 		}
 		if parsedData == "" || parsedData == "[DONE]" {
+			if !streamStarted && !sawAnyEvent {
+				if strings.TrimSpace(outputLine) != "" && len(pendingLines) < 4 {
+					pendingLines = append(pendingLines, outputLine)
+				}
+				continue
+			}
 			if err := writeClaudeCodeStreamLine(c, outputLine); err != nil {
 				return nil, nil, err
 			}
@@ -1128,6 +1154,12 @@ func streamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *rela
 		}
 		var claudeResp claudecode.ClaudeResponse
 		if err := json.Unmarshal([]byte(parsedData), &claudeResp); err != nil {
+			for _, pendingLine := range pendingLines {
+				if err := writeClaudeCodeStreamLine(c, pendingLine); err != nil {
+					return nil, nil, err
+				}
+			}
+			pendingLines = pendingLines[:0]
 			if err := writeClaudeCodeStreamLine(c, outputLine); err != nil {
 				return nil, nil, err
 			}
@@ -1144,6 +1176,12 @@ func streamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *rela
 			}
 			return nil, upstreamErr, nil
 		}
+		for _, pendingLine := range pendingLines {
+			if err := writeClaudeCodeStreamLine(c, pendingLine); err != nil {
+				return nil, nil, err
+			}
+		}
+		pendingLines = pendingLines[:0]
 		if err := writeClaudeCodeStreamLine(c, outputLine); err != nil {
 			return nil, nil, err
 		}
