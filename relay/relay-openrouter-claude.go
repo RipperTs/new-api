@@ -158,10 +158,20 @@ func OpenRouterClaudeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorW
 	}
 
 	var usage *dto.Usage
+	var upstreamErr *dto.OpenAIErrorWithStatusCode
 	if relayInfo.IsStream {
-		usage, err = streamOpenRouterChatToClaude(c, resp, relayInfo)
+		usage, upstreamErr, err = streamOpenRouterChatToClaude(c, resp, relayInfo)
 	} else {
 		usage, err = nonStreamOpenRouterChatToClaude(c, resp, relayInfo)
+	}
+	if upstreamErr != nil {
+		returnPreConsumedQuota(c, relayInfo, userQuota, preConsumedQuota)
+		if c.Writer.Written() {
+			writeClaudeMaybeStreamError(c, relayInfo, upstreamErr.StatusCode, mapOpenAIErrorTypeToClaude(upstreamErr.Error.Type), upstreamErr.Error.Message)
+			return nil
+		}
+		service.ResetStatusCode(upstreamErr, statusCodeMappingStr)
+		return upstreamErr
 	}
 	if err != nil {
 		returnPreConsumedQuota(c, relayInfo, userQuota, preConsumedQuota)
@@ -843,7 +853,7 @@ func buildOpenRouterChatCompletionsURL(baseURL string) string {
 	return base + "/v1/chat/completions"
 }
 
-func streamOpenRouterChatToClaude(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*dto.Usage, error) {
+func streamOpenRouterChatToClaude(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*dto.Usage, *dto.OpenAIErrorWithStatusCode, error) {
 	defer resp.Body.Close()
 
 	usage := &dto.Usage{}
@@ -950,11 +960,11 @@ streamReadLoop:
 		select {
 		case <-ticker.C:
 			_ = resp.Body.Close()
-			return nil, errors.New("openrouter stream timeout")
+			return nil, nil, errors.New("openrouter stream timeout")
 		case line, ok := <-lineCh:
 			if !ok {
 				if err := <-scanErrCh; err != nil {
-					return nil, err
+					return nil, nil, err
 				}
 				goto streamReadDone
 			}
@@ -975,10 +985,11 @@ streamReadLoop:
 			var errorChunk map[string]any
 			if err := json.Unmarshal([]byte(data), &errorChunk); err == nil {
 				if errObj, ok := errorChunk["error"]; ok && errObj != nil {
-					if err = startMessage(); err != nil {
-						return nil, err
-					}
 					errType, errMsg := parseOpenAIStreamError(errObj)
+					openaiErr := openRouterClaudeStreamError(errType, errMsg)
+					if !started {
+						return nil, openaiErr, nil
+					}
 					payload := map[string]any{
 						"type": "error",
 						"error": map[string]any{
@@ -987,9 +998,9 @@ streamReadLoop:
 						},
 					}
 					if writeErr := writeClaudeStreamEvent(c, "error", payload); writeErr != nil {
-						return nil, writeErr
+						return nil, nil, writeErr
 					}
-					return nil, errors.New("openrouter upstream stream error: " + errMsg)
+					return nil, nil, errors.New("openrouter upstream stream error: " + errMsg)
 				}
 			}
 
@@ -999,11 +1010,11 @@ streamReadLoop:
 			if err := json.Unmarshal(normalizedData, &chunk); err != nil {
 				if len(refusalTexts) > 0 {
 					if err = startMessage(); err != nil {
-						return nil, err
+						return nil, nil, err
 					}
 					for _, refusalText := range refusalTexts {
 						if err = writeTextDelta(refusalText); err != nil {
-							return nil, err
+							return nil, nil, err
 						}
 					}
 				}
@@ -1017,7 +1028,7 @@ streamReadLoop:
 				info.UpstreamModelName = modelName
 			}
 			if err := startMessage(); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 
 			if chunk.Usage != nil {
@@ -1043,7 +1054,7 @@ streamReadLoop:
 							},
 						}
 						if err := writeClaudeStreamEvent(c, "content_block_start", startPayload); err != nil {
-							return nil, err
+							return nil, nil, err
 						}
 					}
 					deltaPayload := map[string]any{
@@ -1055,19 +1066,19 @@ streamReadLoop:
 						},
 					}
 					if err := writeClaudeStreamEvent(c, "content_block_delta", deltaPayload); err != nil {
-						return nil, err
+						return nil, nil, err
 					}
 					thinkingHasDelta = true
 				}
 
 				if content := delta.GetContentString(); content != "" {
 					if err := writeTextDelta(content); err != nil {
-						return nil, err
+						return nil, nil, err
 					}
 				}
 				for _, refusalText := range refusalTexts {
 					if err := writeTextDelta(refusalText); err != nil {
-						return nil, err
+						return nil, nil, err
 					}
 				}
 
@@ -1108,7 +1119,7 @@ streamReadLoop:
 								},
 							}
 							if err := writeClaudeStreamEvent(c, "content_block_start", startPayload); err != nil {
-								return nil, err
+								return nil, nil, err
 							}
 						}
 						if strings.TrimSpace(toolCall.Function.Name) != "" {
@@ -1129,7 +1140,7 @@ streamReadLoop:
 								},
 							}
 							if err := writeClaudeStreamEvent(c, "content_block_delta", deltaPayload); err != nil {
-								return nil, err
+								return nil, nil, err
 							}
 						}
 					}
@@ -1144,11 +1155,11 @@ streamReadLoop:
 
 streamReadDone:
 	if !sawAnyChunk {
-		return nil, io.ErrUnexpectedEOF
+		return nil, nil, io.ErrUnexpectedEOF
 	}
 	if !started {
 		if err := startMessage(); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	if stopReason == "end_turn" && hasToolCall {
@@ -1165,7 +1176,7 @@ streamReadDone:
 			},
 		}
 		if err := writeClaudeStreamEvent(c, "content_block_delta", signaturePayload); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		thinkingHasSignature = true
 	}
@@ -1176,7 +1187,7 @@ streamReadDone:
 			"index": idx,
 		}
 		if err := writeClaudeStreamEvent(c, "content_block_stop", stopPayload); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
@@ -1203,16 +1214,16 @@ streamReadDone:
 		},
 	}
 	if err := writeClaudeStreamEvent(c, "message_delta", messageDelta); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	messageStop := map[string]any{
 		"type": "message_stop",
 	}
 	if err := writeClaudeStreamEvent(c, "message_stop", messageStop); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return usage, nil
+	return usage, nil, nil
 }
 
 // OpenRouter 部分视觉/多模态模型会返回 delta.content 为数组或对象。
@@ -1445,6 +1456,43 @@ func parseOpenAIStreamError(errObj any) (string, string) {
 		}
 	}
 	return errType, errMsg
+}
+
+func openRouterClaudeStreamError(errType, errMsg string) *dto.OpenAIErrorWithStatusCode {
+	errType = strings.TrimSpace(errType)
+	if errType == "" {
+		errType = "api_error"
+	}
+	errMsg = strings.TrimSpace(errMsg)
+	if errMsg == "" {
+		errMsg = "upstream error"
+	}
+	return &dto.OpenAIErrorWithStatusCode{
+		Error: dto.OpenAIError{
+			Message: errMsg,
+			Type:    errType,
+			Code:    errType,
+		},
+		StatusCode: openRouterClaudeStreamErrorStatusCode(errType),
+		LocalError: false,
+	}
+}
+
+func openRouterClaudeStreamErrorStatusCode(errType string) int {
+	switch strings.ToLower(strings.TrimSpace(errType)) {
+	case "rate_limit_error", "rate_limit_exceeded", "usage_limit_reached", "overloaded_error":
+		return http.StatusTooManyRequests
+	case "invalid_request_error":
+		return http.StatusBadRequest
+	case "authentication_error":
+		return http.StatusUnauthorized
+	case "permission_error":
+		return http.StatusForbidden
+	case "not_found_error":
+		return http.StatusNotFound
+	default:
+		return http.StatusBadGateway
+	}
 }
 
 func parseNestedProviderError(raw string) (string, string, bool) {
