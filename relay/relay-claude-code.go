@@ -1114,7 +1114,6 @@ func streamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *rela
 	usage := &dto.Usage{}
 	var responseText strings.Builder
 	pendingLines := make([]string, 0, 2)
-	sawAnyEvent := false
 	streamStarted := false
 
 	scanner := bufio.NewScanner(resp.Body)
@@ -1140,7 +1139,7 @@ func streamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *rela
 			}
 		}
 		if parsedData == "" || parsedData == "[DONE]" {
-			if !streamStarted && !sawAnyEvent {
+			if !streamStarted {
 				if strings.TrimSpace(outputLine) != "" && len(pendingLines) < 4 {
 					pendingLines = append(pendingLines, outputLine)
 				}
@@ -1154,6 +1153,9 @@ func streamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *rela
 		}
 		var claudeResp claudecode.ClaudeResponse
 		if err := json.Unmarshal([]byte(parsedData), &claudeResp); err != nil {
+			if !streamStarted {
+				return nil, nil, errors.New("invalid claude stream event before message_start")
+			}
 			for _, pendingLine := range pendingLines {
 				if err := writeClaudeCodeStreamLine(c, pendingLine); err != nil {
 					return nil, nil, err
@@ -1166,7 +1168,6 @@ func streamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *rela
 			streamStarted = true
 			continue
 		}
-		sawAnyEvent = true
 		if upstreamErr := claudeCodeStreamError(resp, &claudeResp); upstreamErr != nil {
 			if streamStarted {
 				if err := writeClaudeCodeStreamLine(c, outputLine); err != nil {
@@ -1175,6 +1176,10 @@ func streamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *rela
 				return nil, nil, fmt.Errorf("%s", upstreamErr.Error.Message)
 			}
 			return nil, upstreamErr, nil
+		}
+		if !streamStarted && claudeResp.Type != "message_start" {
+			pendingLines = pendingLines[:0]
+			continue
 		}
 		for _, pendingLine := range pendingLines {
 			if err := writeClaudeCodeStreamLine(c, pendingLine); err != nil {
@@ -1199,8 +1204,8 @@ func streamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *rela
 	if err := scanner.Err(); err != nil {
 		return nil, nil, err
 	}
-	// 流式响应结束但没有任何有效事件：通常是上游异常断流，避免客户端“无输出/静默”。
-	if !sawAnyEvent {
+	// 流式响应结束但没有 message_start：保持未写响应状态，让 controller 统一重试。
+	if !streamStarted {
 		return nil, nil, io.ErrUnexpectedEOF
 	}
 
@@ -1267,24 +1272,6 @@ func writeClaudeError(c *gin.Context, status int, errType, message string) {
 
 func writeClaudeMaybeStreamError(c *gin.Context, info *relaycommon.RelayInfo, status int, errType, message string) {
 	if c == nil || c.Writer.Written() {
-		return
-	}
-	if info != nil && info.IsStream {
-		service.SetEventStreamHeaders(c)
-		c.Writer.WriteHeader(http.StatusOK)
-		payload := map[string]any{
-			"type": "error",
-			"error": map[string]any{
-				"type":    errType,
-				"message": message,
-			},
-		}
-		b, _ := json.Marshal(payload)
-		_, _ = c.Writer.Write([]byte("event: error\n"))
-		_, _ = c.Writer.Write([]byte("data: " + string(b) + "\n\n"))
-		if f, ok := c.Writer.(http.Flusher); ok {
-			f.Flush()
-		}
 		return
 	}
 	writeClaudeError(c, status, errType, message)

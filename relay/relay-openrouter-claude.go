@@ -888,7 +888,7 @@ func streamOpenRouterChatToClaude(c *gin.Context, resp *http.Response, info *rel
 				"stop_reason":   nil,
 				"stop_sequence": nil,
 				"usage": map[string]any{
-					"input_tokens":  0,
+					"input_tokens":  usage.PromptTokens,
 					"output_tokens": 0,
 				},
 			},
@@ -1027,9 +1027,6 @@ streamReadLoop:
 				modelName = chunk.Model
 				info.UpstreamModelName = modelName
 			}
-			if err := startMessage(); err != nil {
-				return nil, nil, err
-			}
 
 			if chunk.Usage != nil {
 				usage.PromptTokens = chunk.Usage.PromptTokens
@@ -1041,6 +1038,9 @@ streamReadLoop:
 				delta := choice.Delta
 
 				if reasoningText := stripOpenRouterVisibleControlTokens(extractReasoningFromDelta(&delta)); strings.TrimSpace(reasoningText) != "" {
+					if err := startMessage(); err != nil {
+						return nil, nil, err
+					}
 					if thinkingBlockIndex < 0 {
 						thinkingBlockIndex = nextBlockIndex
 						nextBlockIndex++
@@ -1072,17 +1072,26 @@ streamReadLoop:
 				}
 
 				if content := delta.GetContentString(); content != "" {
+					if err := startMessage(); err != nil {
+						return nil, nil, err
+					}
 					if err := writeTextDelta(content); err != nil {
 						return nil, nil, err
 					}
 				}
 				for _, refusalText := range refusalTexts {
+					if err := startMessage(); err != nil {
+						return nil, nil, err
+					}
 					if err := writeTextDelta(refusalText); err != nil {
 						return nil, nil, err
 					}
 				}
 
 				if len(delta.ToolCalls) > 0 {
+					if err := startMessage(); err != nil {
+						return nil, nil, err
+					}
 					hasToolCall = true
 					for _, toolCall := range delta.ToolCalls {
 						toolCallIndex := 0
