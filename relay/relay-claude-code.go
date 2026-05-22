@@ -1034,12 +1034,72 @@ func patchMissingThinkingSignature(v any) bool {
 	}
 }
 
-func patchMissingThinkingSignatureJSON(raw []byte) ([]byte, bool) {
+func patchEmptyClaudeCodeReadPages(v any) bool {
+	switch t := v.(type) {
+	case map[string]any:
+		changed := false
+		if typ, _ := t["type"].(string); typ == "tool_use" {
+			if name, _ := t["name"].(string); name == "Read" {
+				if input, ok := t["input"].(map[string]any); ok {
+					if pages, ok := input["pages"].(string); ok && pages == "" {
+						delete(input, "pages")
+						changed = true
+					}
+				}
+			}
+		}
+		for _, sub := range t {
+			if patchEmptyClaudeCodeReadPages(sub) {
+				changed = true
+			}
+		}
+		return changed
+	case []any:
+		changed := false
+		for _, sub := range t {
+			if patchEmptyClaudeCodeReadPages(sub) {
+				changed = true
+			}
+		}
+		return changed
+	default:
+		return false
+	}
+}
+
+func sanitizeClaudeCodeReadInput(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return raw
+	}
+	var input map[string]any
+	if err := json.Unmarshal([]byte(raw), &input); err != nil {
+		return raw
+	}
+	if pages, ok := input["pages"].(string); !ok || pages != "" {
+		return raw
+	}
+	delete(input, "pages")
+	patched, err := json.Marshal(input)
+	if err != nil {
+		return raw
+	}
+	return string(patched)
+}
+
+func patchClaudeCodeResponse(v any) bool {
+	changed := patchMissingThinkingSignature(v)
+	if patchEmptyClaudeCodeReadPages(v) {
+		changed = true
+	}
+	return changed
+}
+
+func patchClaudeCodeResponseJSON(raw []byte) ([]byte, bool) {
 	var parsed any
 	if err := json.Unmarshal(raw, &parsed); err != nil {
 		return raw, false
 	}
-	if !patchMissingThinkingSignature(parsed) {
+	if !patchClaudeCodeResponse(parsed) {
 		return raw, false
 	}
 	patched, err := json.Marshal(parsed)
@@ -1047,6 +1107,128 @@ func patchMissingThinkingSignatureJSON(raw []byte) ([]byte, bool) {
 		return raw, false
 	}
 	return patched, true
+}
+
+type claudeCodeStreamPatchState struct {
+	readToolInputs map[int]*strings.Builder
+}
+
+func newClaudeCodeStreamPatchState() *claudeCodeStreamPatchState {
+	return &claudeCodeStreamPatchState{
+		readToolInputs: make(map[int]*strings.Builder),
+	}
+}
+
+func (s *claudeCodeStreamPatchState) patchEvent(root map[string]any) (extraLines []string, suppress bool) {
+	if s == nil {
+		return nil, false
+	}
+	eventType, _ := root["type"].(string)
+	idx, hasIndex := claudeCodeStreamEventIndex(root["index"])
+
+	switch eventType {
+	case "content_block_start":
+		if !hasIndex {
+			return nil, false
+		}
+		block, ok := root["content_block"].(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		blockType, _ := block["type"].(string)
+		name, _ := block["name"].(string)
+		if blockType == "tool_use" && name == "Read" {
+			s.readToolInputs[idx] = &strings.Builder{}
+		}
+	case "content_block_delta":
+		if !hasIndex {
+			return nil, false
+		}
+		input, ok := s.readToolInputs[idx]
+		if !ok {
+			return nil, false
+		}
+		delta, ok := root["delta"].(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		deltaType, _ := delta["type"].(string)
+		if deltaType != "input_json_delta" {
+			return nil, false
+		}
+		if partialJSON, ok := delta["partial_json"].(string); ok {
+			input.WriteString(partialJSON)
+		}
+		return nil, true
+	case "content_block_stop":
+		if !hasIndex {
+			return nil, false
+		}
+		input, ok := s.readToolInputs[idx]
+		if !ok {
+			return nil, false
+		}
+		delete(s.readToolInputs, idx)
+		raw := input.String()
+		if raw == "" {
+			return nil, false
+		}
+		event := map[string]any{
+			"type":  "content_block_delta",
+			"index": idx,
+			"delta": map[string]any{
+				"type":         "input_json_delta",
+				"partial_json": sanitizeClaudeCodeReadInput(raw),
+			},
+		}
+		data, err := json.Marshal(event)
+		if err != nil {
+			return nil, false
+		}
+		return []string{"event: content_block_delta", "data: " + string(data), ""}, false
+	}
+	return nil, false
+}
+
+func patchClaudeCodeStreamEventData(data string, state *claudeCodeStreamPatchState) (string, []string, bool, bool) {
+	var parsed any
+	if err := json.Unmarshal([]byte(data), &parsed); err != nil {
+		return data, nil, false, false
+	}
+	root, _ := parsed.(map[string]any)
+	var extraLines []string
+	if root != nil && state != nil {
+		var suppress bool
+		extraLines, suppress = state.patchEvent(root)
+		if suppress {
+			return data, nil, true, false
+		}
+	}
+	if !patchClaudeCodeResponse(parsed) {
+		return data, extraLines, false, false
+	}
+	patched, err := json.Marshal(parsed)
+	if err != nil {
+		return data, extraLines, false, false
+	}
+	return string(patched), extraLines, false, true
+}
+
+func claudeCodeStreamEventIndex(v any) (int, bool) {
+	switch n := v.(type) {
+	case float64:
+		return int(n), true
+	case int:
+		return n, true
+	case json.Number:
+		i, err := n.Int64()
+		if err != nil {
+			return 0, false
+		}
+		return int(i), true
+	default:
+		return 0, false
+	}
 }
 
 func claudeCodeStreamError(resp *http.Response, claudeResp *claudecode.ClaudeResponse) *dto.OpenAIErrorWithStatusCode {
@@ -1116,6 +1298,8 @@ func streamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *rela
 	var responseText strings.Builder
 	pendingLines := make([]string, 0, 2)
 	streamStarted := false
+	streamPatchState := newClaudeCodeStreamPatchState()
+	pendingEventLine := ""
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
@@ -1124,22 +1308,58 @@ func streamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *rela
 		info.SetFirstResponseTime()
 		outputLine := line
 		parsedData := ""
+		if strings.HasPrefix(line, "event:") {
+			if pendingEventLine != "" {
+				if !streamStarted {
+					if len(pendingLines) < 4 {
+						pendingLines = append(pendingLines, pendingEventLine)
+					}
+				} else if err := writeClaudeCodeStreamLine(c, pendingEventLine); err != nil {
+					return nil, nil, err
+				}
+			}
+			pendingEventLine = line
+			continue
+		}
 		if strings.HasPrefix(line, "data:") {
 			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 			parsedData = data
 			if data != "" && data != "[DONE]" {
-				if patched, changed := patchMissingThinkingSignatureJSON([]byte(data)); changed {
-					patchedData := string(patched)
-					if strings.HasPrefix(line, "data: ") {
-						outputLine = "data: " + patchedData
-					} else {
-						outputLine = "data:" + patchedData
+				if patchedData, extraLines, suppress, changed := patchClaudeCodeStreamEventData(data, streamPatchState); suppress {
+					pendingEventLine = ""
+					continue
+				} else {
+					for _, extraLine := range extraLines {
+						if !streamStarted {
+							pendingLines = append(pendingLines, extraLine)
+						} else {
+							if err := writeClaudeCodeStreamLine(c, extraLine); err != nil {
+								return nil, nil, err
+							}
+						}
 					}
-					parsedData = patchedData
+					if changed {
+						if strings.HasPrefix(line, "data: ") {
+							outputLine = "data: " + patchedData
+						} else {
+							outputLine = "data:" + patchedData
+						}
+						parsedData = patchedData
+					}
 				}
 			}
 		}
 		if parsedData == "" || parsedData == "[DONE]" {
+			if pendingEventLine != "" {
+				if !streamStarted {
+					if len(pendingLines) < 4 {
+						pendingLines = append(pendingLines, pendingEventLine)
+					}
+				} else if err := writeClaudeCodeStreamLine(c, pendingEventLine); err != nil {
+					return nil, nil, err
+				}
+				pendingEventLine = ""
+			}
 			if !streamStarted {
 				if strings.TrimSpace(outputLine) != "" && len(pendingLines) < 4 {
 					pendingLines = append(pendingLines, outputLine)
@@ -1156,6 +1376,10 @@ func streamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *rela
 		if err := json.Unmarshal([]byte(parsedData), &claudeResp); err != nil {
 			if !streamStarted {
 				return nil, nil, errors.New("invalid claude stream event before message_start")
+			}
+			if pendingEventLine != "" {
+				pendingLines = append(pendingLines, pendingEventLine)
+				pendingEventLine = ""
 			}
 			for _, pendingLine := range pendingLines {
 				if err := writeClaudeCodeStreamLine(c, pendingLine); err != nil {
@@ -1180,7 +1404,12 @@ func streamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *rela
 		}
 		if !streamStarted && claudeResp.Type != "message_start" {
 			pendingLines = pendingLines[:0]
+			pendingEventLine = ""
 			continue
+		}
+		if pendingEventLine != "" {
+			pendingLines = append(pendingLines, pendingEventLine)
+			pendingEventLine = ""
 		}
 		for _, pendingLine := range pendingLines {
 			if err := writeClaudeCodeStreamLine(c, pendingLine); err != nil {
@@ -1227,7 +1456,7 @@ func nonStreamClaudeCodePassthrough(c *gin.Context, resp *http.Response, info *r
 		return nil, err
 	}
 	defer resp.Body.Close()
-	if patched, changed := patchMissingThinkingSignatureJSON(body); changed {
+	if patched, changed := patchClaudeCodeResponseJSON(body); changed {
 		body = patched
 	}
 
