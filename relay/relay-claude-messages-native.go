@@ -53,11 +53,21 @@ func (a *nativeClaudeMessagesAdapter) DoRequest(c *gin.Context, relayInfo *relay
 }
 
 func (a *nativeClaudeMessagesAdapter) HandleResponse(c *gin.Context, resp *http.Response, relayInfo *relaycommon.RelayInfo) (*dto.Usage, *dto.OpenAIErrorWithStatusCode, error) {
+	return handleClaudeCodeNativeResponse(c, resp, relayInfo)
+}
+
+func handleClaudeCodeNativeResponse(c *gin.Context, resp *http.Response, relayInfo *relaycommon.RelayInfo) (*dto.Usage, *dto.OpenAIErrorWithStatusCode, error) {
 	if relayInfo.IsStream {
 		return streamClaudeCodePassthrough(c, resp, relayInfo)
 	}
 	usage, err := nonStreamClaudeCodePassthrough(c, resp, relayInfo)
 	return usage, nil, err
+}
+
+// HandleClaudeCodeNativeChannelTestResponse lets management channel tests reuse
+// the same native Claude Messages response path as the online relay.
+func HandleClaudeCodeNativeChannelTestResponse(c *gin.Context, resp *http.Response, relayInfo *relaycommon.RelayInfo) (*dto.Usage, *dto.OpenAIErrorWithStatusCode, error) {
+	return handleClaudeCodeNativeResponse(c, resp, relayInfo)
 }
 
 func ClaudeCodeMessagesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) {

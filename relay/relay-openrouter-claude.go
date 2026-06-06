@@ -49,9 +49,9 @@ func (a *openRouterClaudeMessagesAdapter) DoRequest(c *gin.Context, relayInfo *r
 
 func (a *openRouterClaudeMessagesAdapter) HandleResponse(c *gin.Context, resp *http.Response, relayInfo *relaycommon.RelayInfo) (*dto.Usage, *dto.OpenAIErrorWithStatusCode, error) {
 	if relayInfo.IsStream {
-		return streamOpenRouterChatToClaude(c, resp, relayInfo)
+		return streamOpenAIChatToClaude(c, resp, relayInfo)
 	}
-	usage, err := nonStreamOpenRouterChatToClaude(c, resp, relayInfo)
+	usage, err := nonStreamOpenAIChatToClaude(c, resp, relayInfo)
 	return usage, nil, err
 }
 

@@ -207,14 +207,28 @@ func testChannel(channel *model.Channel, testModel string) (err error, openAIErr
 			}
 		}
 	}
-	usageA, respErr := adaptor.DoResponse(c, httpResp, meta)
-	if respErr != nil {
-		return fmt.Errorf("%s", respErr.Error.Message), respErr
+	var usage *dto.Usage
+	if channel.Type == common.ChannelTypeClaudeCode {
+		nativeUsage, respErr, nativeErr := relay.HandleClaudeCodeNativeChannelTestResponse(c, httpResp, meta)
+		if nativeErr != nil {
+			return nativeErr, nil
+		}
+		if respErr != nil {
+			return fmt.Errorf("%s", respErr.Error.Message), respErr
+		}
+		usage = nativeUsage
+	} else {
+		usageA, respErr := adaptor.DoResponse(c, httpResp, meta)
+		if respErr != nil {
+			return fmt.Errorf("%s", respErr.Error.Message), respErr
+		}
+		if usageA != nil {
+			usage = usageA.(*dto.Usage)
+		}
 	}
-	if usageA == nil {
+	if usage == nil {
 		return errors.New("usage is nil"), nil
 	}
-	usage := usageA.(*dto.Usage)
 	result := w.Result()
 	respBody, err := io.ReadAll(result.Body)
 	if err != nil {
