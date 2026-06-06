@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import {
   API,
   copy,
-  getUserIdFromLocalStorage,
   getTodayStartTimestamp,
   isAdmin,
   showError,
@@ -63,23 +62,6 @@ const colors = [
   'yellow',
 ];
 
-const LOG_FILTERS_STORAGE_KEY = 'logs-filters-v1';
-const LOG_PERSISTED_FILTER_KEYS = [
-  'username',
-  'token_name',
-  'model_name',
-  'group',
-  'channel',
-];
-
-const getLogFiltersStorageKey = () => {
-  const userId = getUserIdFromLocalStorage();
-  if (userId > 0) {
-    return `${LOG_FILTERS_STORAGE_KEY}-${userId}`;
-  }
-  return LOG_FILTERS_STORAGE_KEY;
-};
-
 const getDefaultInputs = () => {
   const now = new Date();
   return {
@@ -91,36 +73,6 @@ const getDefaultInputs = () => {
     end_timestamp: timestamp2string(now.getTime() / 1000 + 3600),
     channel: '',
   };
-};
-
-const pickPersistedLogFilters = (source) => {
-  const persistedFilters = {};
-  LOG_PERSISTED_FILTER_KEYS.forEach((key) => {
-    if (Object.prototype.hasOwnProperty.call(source, key)) {
-      persistedFilters[key] = source[key];
-    }
-  });
-  return persistedFilters;
-};
-
-const getInitialInputs = () => {
-  const defaultInputs = getDefaultInputs();
-  if (typeof window === 'undefined') {
-    return defaultInputs;
-  }
-  try {
-    const storedInputs = localStorage.getItem(getLogFiltersStorageKey());
-    if (!storedInputs) {
-      return defaultInputs;
-    }
-    const parsedInputs = JSON.parse(storedInputs);
-    return {
-      ...defaultInputs,
-      ...pickPersistedLogFilters(parsedInputs),
-    };
-  } catch {
-    return defaultInputs;
-  }
 };
 
 function renderType(type) {
@@ -462,7 +414,7 @@ const LogsTable = () => {
   const [pageSize, setPageSize] = useState(ITEMS_PER_PAGE);
   const [logType, setLogType] = useState(0);
   const isAdminUser = isAdmin();
-  const [inputs, setInputs] = useState(() => getInitialInputs());
+  const [inputs, setInputs] = useState(() => getDefaultInputs());
   const {
     username,
     token_name,
@@ -733,17 +685,6 @@ const LogsTable = () => {
       });
     handleEyeClick();
   }, []);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(
-        getLogFiltersStorageKey(),
-        JSON.stringify(pickPersistedLogFilters(inputs)),
-      );
-    } catch {
-      // ignore
-    }
-  }, [inputs]);
 
   const expandRowRender = (record, index) => {
     return <Descriptions data={expandData[record.key]} />;
