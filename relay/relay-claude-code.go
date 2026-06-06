@@ -711,11 +711,23 @@ func ensureDeepSeekV4ThinkingOptions(bodyMap map[string]json.RawMessage) {
 }
 
 func applyDeepSeekV4ThinkingCompatibility(bodyMap map[string]json.RawMessage) {
-	if hasIncompleteDeepSeekV4ThinkingHistory(bodyMap["messages"]) {
+	if isClaudeThinkingDisabled(bodyMap["thinking"]) || hasIncompleteDeepSeekV4ThinkingHistory(bodyMap["messages"]) {
 		disableDeepSeekV4Thinking(bodyMap)
 		return
 	}
 	ensureDeepSeekV4ThinkingOptions(bodyMap)
+}
+
+func isClaudeThinkingDisabled(raw json.RawMessage) bool {
+	if !hasClaudeRequestRawField(raw) {
+		return false
+	}
+	var thinking map[string]any
+	if err := json.Unmarshal(raw, &thinking); err != nil || thinking == nil {
+		return false
+	}
+	thinkingType, ok := thinking["type"].(string)
+	return ok && strings.EqualFold(strings.TrimSpace(thinkingType), "disabled")
 }
 
 func hasIncompleteDeepSeekV4ThinkingHistory(raw json.RawMessage) bool {
@@ -762,6 +774,7 @@ func disableDeepSeekV4Thinking(bodyMap map[string]json.RawMessage) {
 	}
 	bodyMap["thinking"] = json.RawMessage(`{"type":"disabled"}`)
 	delete(bodyMap, "output_config")
+	delete(bodyMap, "reasoning_effort")
 	delete(bodyMap, "context_management")
 	if stripped, changed := stripThinkingBlocksFromMessagesRaw(bodyMap["messages"]); changed {
 		bodyMap["messages"] = stripped

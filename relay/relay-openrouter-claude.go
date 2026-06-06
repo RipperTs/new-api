@@ -258,6 +258,9 @@ func convertClaudeThinkingToReasoning(bodyMap map[string]json.RawMessage) map[st
 	if raw, ok := bodyMap["thinking"]; ok && len(raw) != 0 {
 		var thinkingMap map[string]any
 		if err := json.Unmarshal(raw, &thinkingMap); err == nil && thinkingMap != nil {
+			if isClaudeThinkingDisabled(raw) {
+				return map[string]any{"effort": "none"}
+			}
 			if t, ok := thinkingMap["type"].(string); ok && strings.TrimSpace(t) != "" {
 				if strings.EqualFold(strings.TrimSpace(t), "enabled") {
 					reasoning["enabled"] = true
