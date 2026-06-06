@@ -161,11 +161,14 @@ func testChannel(channel *model.Channel, testModel string) (err error, openAIErr
 		if err = json.Unmarshal(jsonData, &claudeReq); err != nil {
 			return err, service.OpenAIErrorWrapperLocal(err, "unmarshal_claude_test_request_failed", http.StatusInternalServerError)
 		}
-		preparedReq, prepErr := relay.PrepareClaudeCodeMessagesRequest(c, meta, &claudeReq, jsonData)
-		if prepErr != nil {
-			return prepErr, service.OpenAIErrorWrapperLocal(prepErr, "prepare_claude_test_request_failed", http.StatusInternalServerError)
+		bodyMap := make(map[string]json.RawMessage)
+		if err = json.Unmarshal(jsonData, &bodyMap); err != nil {
+			return err, service.OpenAIErrorWrapperLocal(err, "unmarshal_claude_test_body_failed", http.StatusInternalServerError)
 		}
-		jsonData, err = preparedReq.Marshal(claudeReq.Model)
+		if err = relay.PrepareClaudeCodeMessagesRequest(c, meta, &claudeReq, bodyMap); err != nil {
+			return err, service.OpenAIErrorWrapperLocal(err, "prepare_claude_test_request_failed", http.StatusInternalServerError)
+		}
+		jsonData, err = relay.MarshalClaudeCodeMessagesRequest(bodyMap, claudeReq.Model)
 		if err != nil {
 			return err, service.OpenAIErrorWrapperLocal(err, "marshal_claude_test_request_failed", http.StatusInternalServerError)
 		}
