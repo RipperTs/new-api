@@ -130,6 +130,59 @@ func TestPrepareClaudeCodeMessagesRequestRemovesContextManagementByDefault(t *te
 	}
 }
 
+func TestPrepareClaudeCodeMessagesRequestRemovesToolInputExamples(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = &http.Request{Header: make(http.Header)}
+	bodyMap := map[string]json.RawMessage{
+		"model":      json.RawMessage(`"claude-sonnet-4-20250514"`),
+		"max_tokens": json.RawMessage(`10`),
+		"messages":   json.RawMessage(`[{"role":"user","content":[{"type":"text","text":"hi"}]}]`),
+		"tools": json.RawMessage(`[
+			{
+				"name":"Read",
+				"description":"Read a file",
+				"input_schema":{"type":"object","properties":{"file_path":{"type":"string"}}},
+				"input_examples":[{"file_path":"/tmp/a.txt"}]
+			}
+		]`),
+	}
+	var req claudecode.ClaudeRequest
+	if err := json.Unmarshal([]byte(`{
+		"model":"claude-sonnet-4-20250514",
+		"max_tokens":10,
+		"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}],
+		"tools":[{
+			"name":"Read",
+			"description":"Read a file",
+			"input_schema":{"type":"object","properties":{"file_path":{"type":"string"}}},
+			"input_examples":[{"file_path":"/tmp/a.txt"}]
+		}]
+	}`), &req); err != nil {
+		t.Fatal(err)
+	}
+	info := &relaycommon.RelayInfo{
+		ApiKey:         "test-key",
+		ChannelSetting: map[string]any{},
+	}
+
+	if err := PrepareClaudeCodeMessagesRequest(c, info, &req, bodyMap); err != nil {
+		t.Fatalf("PrepareClaudeCodeMessagesRequest error: %v", err)
+	}
+
+	var tools []map[string]any
+	if err := json.Unmarshal(bodyMap["tools"], &tools); err != nil {
+		t.Fatalf("unmarshal tools: %v", err)
+	}
+	if _, ok := tools[0]["input_examples"]; ok {
+		t.Fatalf("input_examples should be removed: %s", bodyMap["tools"])
+	}
+	if tools[0]["name"] != "Read" {
+		t.Fatalf("tool fields should be preserved: %#v", tools[0])
+	}
+}
+
 func TestPrepareClaudeCodeMessagesRequestSanitizesEmptyTextBlocks(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()

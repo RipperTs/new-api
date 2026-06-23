@@ -29,6 +29,7 @@ func (a *nativeClaudeMessagesAdapter) NormalizeRequest(c *gin.Context, relayInfo
 
 func (a *nativeClaudeMessagesAdapter) PrepareRequest(c *gin.Context, relayInfo *relaycommon.RelayInfo, claudeReq *claudecode.ClaudeRequest, bodyMap map[string]json.RawMessage) (*ClaudeMessagesPreparedRequest, error) {
 	removeClaudeCodeContextManagement(bodyMap)
+	removeClaudeCodeToolsInputExamples(bodyMap)
 	jsonData, err := marshalClaudeRequestBodyWithModelFirst(bodyMap, claudeReq.Model)
 	if err != nil {
 		return nil, err

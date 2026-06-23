@@ -75,6 +75,7 @@ func PrepareClaudeCodeMessagesRequest(c *gin.Context, relayInfo *relaycommon.Rel
 		applyDeepSeekV4ThinkingCompatibility(bodyMap)
 	}
 	removeClaudeCodeContextManagement(bodyMap)
+	removeClaudeCodeToolsInputExamples(bodyMap)
 	if messagesRaw, ok := bodyMap["messages"]; ok {
 		patchedMessages := messagesRaw
 		messagesChanged := false
@@ -110,6 +111,7 @@ func PrepareClaudeCodeMessagesRequest(c *gin.Context, relayInfo *relaycommon.Rel
 			bodyMap["tools"] = toolsRaw
 		}
 	}
+	removeClaudeCodeToolsInputExamples(bodyMap)
 
 	userSystemRaw := bodyMap["system"]
 	c.Set("claude_is_official_cli", isOfficialClaudeCLIRequest(c, userSystemRaw, claudeReq.System))
@@ -488,6 +490,35 @@ func removeClaudeCodeContextManagement(bodyMap map[string]json.RawMessage) {
 		return
 	}
 	delete(bodyMap, "context_management")
+}
+
+func removeClaudeCodeToolsInputExamples(bodyMap map[string]json.RawMessage) {
+	if bodyMap == nil {
+		return
+	}
+	raw, ok := bodyMap["tools"]
+	if !ok || !hasClaudeRequestRawField(raw) {
+		return
+	}
+	var tools []map[string]any
+	if err := json.Unmarshal(raw, &tools); err != nil {
+		return
+	}
+	changed := false
+	for _, tool := range tools {
+		if _, ok := tool["input_examples"]; ok {
+			delete(tool, "input_examples")
+			changed = true
+		}
+	}
+	if !changed {
+		return
+	}
+	patched, err := json.Marshal(tools)
+	if err != nil {
+		return
+	}
+	bodyMap["tools"] = patched
 }
 
 func normalizeInvalidThinkingInMessagesRaw(raw json.RawMessage) (json.RawMessage, bool) {
