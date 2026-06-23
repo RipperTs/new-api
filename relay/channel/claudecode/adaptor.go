@@ -76,28 +76,6 @@ func shouldUseAnthropicBeta(setting map[string]interface{}) bool {
 	}
 }
 
-func appendAnthropicBeta(beta string, values ...string) string {
-	parts := make([]string, 0, 1+len(values))
-	seen := make(map[string]bool)
-	for _, part := range strings.Split(beta, ",") {
-		trimmed := strings.TrimSpace(part)
-		if trimmed == "" || seen[trimmed] {
-			continue
-		}
-		parts = append(parts, trimmed)
-		seen[trimmed] = true
-	}
-	for _, value := range values {
-		trimmed := strings.TrimSpace(value)
-		if trimmed == "" || seen[trimmed] {
-			continue
-		}
-		parts = append(parts, trimmed)
-		seen[trimmed] = true
-	}
-	return strings.Join(parts, ",")
-}
-
 func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.AudioRequest) (io.Reader, error) {
 	//TODO implement me
 	return nil, errors.New("not implemented")
@@ -155,17 +133,11 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 	if shouldUseAnthropicBeta(info.ChannelSetting) {
 		clientBeta := strings.TrimSpace(c.GetHeader("anthropic-beta"))
 		if c.GetBool("claude_is_official_cli") && clientBeta != "" {
-			if c.GetBool("claude_context_management_beta_required") {
-				clientBeta = appendAnthropicBeta(clientBeta, "context-management-2025-06-27")
-			}
 			req.Set("anthropic-beta", clientBeta)
 		} else {
 			beta := "claude-code-20250219,oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14"
 			if !c.GetBool("claude_disable_interleaved_thinking") && info != nil && info.RelayMode == relayconstant.RelayModeClaudeMessages {
 				beta = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14"
-			}
-			if c.GetBool("claude_context_management_beta_required") {
-				beta = appendAnthropicBeta(beta, "context-management-2025-06-27")
 			}
 			req.Set("anthropic-beta", beta)
 		}

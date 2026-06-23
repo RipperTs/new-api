@@ -2,42 +2,8 @@ package claudecode
 
 import (
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
-
-	relaycommon "one-api/relay/common"
-	relayconstant "one-api/relay/constant"
-
-	"github.com/gin-gonic/gin"
 )
-
-func TestSetupRequestHeaderAddsContextManagementBetaWhenRequired(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	recorder := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(recorder)
-	c.Request = &http.Request{Header: make(http.Header)}
-	c.Set("claude_context_management_beta_required", true)
-	info := &relaycommon.RelayInfo{
-		ApiKey:         "test-key",
-		RelayMode:      relayconstant.RelayModeClaudeMessages,
-		ChannelSetting: map[string]any{},
-	}
-	header := make(http.Header)
-
-	if err := (&Adaptor{}).SetupRequestHeader(c, &header, info); err != nil {
-		t.Fatalf("SetupRequestHeader error: %v", err)
-	}
-
-	beta := header.Get("anthropic-beta")
-	if !strings.Contains(beta, "context-management-2025-06-27") {
-		t.Fatalf("anthropic-beta should include context-management beta, got %q", beta)
-	}
-	if strings.Count(beta, "context-management-2025-06-27") != 1 {
-		t.Fatalf("anthropic-beta should include context-management beta once, got %q", beta)
-	}
-}
 
 func TestSanitizeEmptyClaudeTextBlocks(t *testing.T) {
 	body := []byte(`{
