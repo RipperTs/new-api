@@ -96,6 +96,182 @@ func TestPrepareClaudeCodeMessagesRequestSyncsDeepSeekMessagesToParsedRequest(t 
 	}
 }
 
+func TestPrepareClaudeCodeMessagesRequestKeepsOnlyContextManagementEdits(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = &http.Request{Header: make(http.Header)}
+	bodyMap := map[string]json.RawMessage{
+		"model":              json.RawMessage(`"claude-sonnet-4-20250514"`),
+		"max_tokens":         json.RawMessage(`10`),
+		"context_management": json.RawMessage(`{"enabled":true,"type":"context","edits":[{"type":"clear_tool_uses_20250919","trigger":{"type":"input_tokens","value":20000},"keep":{"type":"tool_uses","value":3}}]}`),
+		"messages":           json.RawMessage(`[{"role":"user","content":[{"type":"text","text":"hi"}]}]`),
+	}
+	var req claudecode.ClaudeRequest
+	if err := json.Unmarshal([]byte(`{
+		"model":"claude-sonnet-4-20250514",
+		"max_tokens":10,
+		"context_management":{"enabled":true,"type":"context","edits":[{"type":"clear_tool_uses_20250919","trigger":{"type":"input_tokens","value":20000},"keep":{"type":"tool_uses","value":3}}]},
+		"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]
+	}`), &req); err != nil {
+		t.Fatal(err)
+	}
+	info := &relaycommon.RelayInfo{
+		ApiKey:         "test-key",
+		ChannelSetting: map[string]any{},
+	}
+
+	if err := PrepareClaudeCodeMessagesRequest(c, info, &req, bodyMap); err != nil {
+		t.Fatalf("PrepareClaudeCodeMessagesRequest error: %v", err)
+	}
+
+	var contextManagement map[string]any
+	if err := json.Unmarshal(bodyMap["context_management"], &contextManagement); err != nil {
+		t.Fatalf("unmarshal context_management: %v", err)
+	}
+	if _, ok := contextManagement["enabled"]; ok {
+		t.Fatalf("context_management enabled should be removed: %s", bodyMap["context_management"])
+	}
+	if _, ok := contextManagement["type"]; ok {
+		t.Fatalf("context_management type should be removed: %s", bodyMap["context_management"])
+	}
+	if _, ok := contextManagement["edits"]; !ok {
+		t.Fatalf("context_management edits should be kept: %s", bodyMap["context_management"])
+	}
+	if !c.GetBool("claude_context_management_beta_required") {
+		t.Fatal("context-management beta should be required")
+	}
+}
+
+func TestPrepareClaudeCodeMessagesRequestRemovesContextManagementForHaiku45(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = &http.Request{Header: make(http.Header)}
+	bodyMap := map[string]json.RawMessage{
+		"model":              json.RawMessage(`"claude-haiku-4-5-20251001"`),
+		"max_tokens":         json.RawMessage(`10`),
+		"context_management": json.RawMessage(`{"edits":[{"type":"clear_tool_uses_20250919","trigger":{"type":"input_tokens","value":20000},"keep":{"type":"tool_uses","value":3}}]}`),
+		"messages":           json.RawMessage(`[{"role":"user","content":[{"type":"text","text":"hi"}]}]`),
+	}
+	var req claudecode.ClaudeRequest
+	if err := json.Unmarshal([]byte(`{
+		"model":"claude-haiku-4-5-20251001",
+		"max_tokens":10,
+		"context_management":{"edits":[{"type":"clear_tool_uses_20250919","trigger":{"type":"input_tokens","value":20000},"keep":{"type":"tool_uses","value":3}}]},
+		"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]
+	}`), &req); err != nil {
+		t.Fatal(err)
+	}
+	info := &relaycommon.RelayInfo{
+		ApiKey:         "test-key",
+		ChannelSetting: map[string]any{},
+	}
+
+	if err := PrepareClaudeCodeMessagesRequest(c, info, &req, bodyMap); err != nil {
+		t.Fatalf("PrepareClaudeCodeMessagesRequest error: %v", err)
+	}
+
+	if _, ok := bodyMap["context_management"]; ok {
+		t.Fatalf("context_management should be removed for Haiku 4.5: %s", bodyMap["context_management"])
+	}
+	if c.GetBool("claude_context_management_beta_required") {
+		t.Fatal("context-management beta should not be required after removing context_management")
+	}
+}
+
+func TestPrepareClaudeCodeMessagesRequestRemovesContextManagementWhenBetaDisabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = &http.Request{Header: make(http.Header)}
+	bodyMap := map[string]json.RawMessage{
+		"model":              json.RawMessage(`"claude-sonnet-4-20250514"`),
+		"max_tokens":         json.RawMessage(`10`),
+		"context_management": json.RawMessage(`{"edits":[{"type":"clear_tool_uses_20250919","trigger":{"type":"input_tokens","value":20000},"keep":{"type":"tool_uses","value":3}}]}`),
+		"messages":           json.RawMessage(`[{"role":"user","content":[{"type":"text","text":"hi"}]}]`),
+	}
+	var req claudecode.ClaudeRequest
+	if err := json.Unmarshal([]byte(`{
+		"model":"claude-sonnet-4-20250514",
+		"max_tokens":10,
+		"context_management":{"edits":[{"type":"clear_tool_uses_20250919","trigger":{"type":"input_tokens","value":20000},"keep":{"type":"tool_uses","value":3}}]},
+		"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]
+	}`), &req); err != nil {
+		t.Fatal(err)
+	}
+	info := &relaycommon.RelayInfo{
+		ApiKey:         "test-key",
+		ChannelSetting: map[string]any{"use_anthropic_beta": false},
+	}
+
+	if err := PrepareClaudeCodeMessagesRequest(c, info, &req, bodyMap); err != nil {
+		t.Fatalf("PrepareClaudeCodeMessagesRequest error: %v", err)
+	}
+
+	if _, ok := bodyMap["context_management"]; ok {
+		t.Fatalf("context_management should be removed when beta is disabled: %s", bodyMap["context_management"])
+	}
+	if c.GetBool("claude_context_management_beta_required") {
+		t.Fatal("context-management beta should not be required after removing context_management")
+	}
+}
+
+func TestPrepareClaudeCodeMessagesRequestSanitizesEmptyTextBlocks(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = &http.Request{Header: make(http.Header)}
+	bodyMap := map[string]json.RawMessage{
+		"model":      json.RawMessage(`"claude-sonnet-4-20250514"`),
+		"max_tokens": json.RawMessage(`10`),
+		"messages": json.RawMessage(`[
+			{"role":"user","content":[
+				{"type":"text","text":"  "},
+				{"type":"tool_result","tool_use_id":"tool_1","content":" "}
+			]}
+		]`),
+	}
+	var req claudecode.ClaudeRequest
+	if err := json.Unmarshal([]byte(`{
+		"model":"claude-sonnet-4-20250514",
+		"max_tokens":10,
+		"messages":[{"role":"user","content":[
+			{"type":"text","text":"  "},
+			{"type":"tool_result","tool_use_id":"tool_1","content":" "}
+		]}]
+	}`), &req); err != nil {
+		t.Fatal(err)
+	}
+	info := &relaycommon.RelayInfo{
+		ApiKey:         "test-key",
+		ChannelSetting: map[string]any{},
+	}
+
+	if err := PrepareClaudeCodeMessagesRequest(c, info, &req, bodyMap); err != nil {
+		t.Fatalf("PrepareClaudeCodeMessagesRequest error: %v", err)
+	}
+
+	var messages []map[string]any
+	if err := json.Unmarshal(bodyMap["messages"], &messages); err != nil {
+		t.Fatalf("unmarshal messages: %v", err)
+	}
+	content := messages[0]["content"].([]any)
+	if len(content) != 1 {
+		t.Fatalf("empty text block should be removed, got %#v", content)
+	}
+	toolResult := content[0].(map[string]any)
+	if toolResult["type"] != "tool_result" || toolResult["content"] != "..." {
+		t.Fatalf("tool_result content should be patched, got %#v", toolResult)
+	}
+
+	parsedContent := req.Messages[0].Content.([]any)
+	parsedToolResult := parsedContent[0].(map[string]any)
+	if parsedToolResult["content"] != "..." {
+		t.Fatalf("parsed request messages should be synced, got %#v", req.Messages[0].Content)
+	}
+}
+
 func jsonContains(raw, needle string) bool {
 	var v any
 	if err := json.Unmarshal([]byte(raw), &v); err != nil {

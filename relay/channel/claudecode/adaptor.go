@@ -76,6 +76,28 @@ func shouldUseAnthropicBeta(setting map[string]interface{}) bool {
 	}
 }
 
+func appendAnthropicBeta(beta string, values ...string) string {
+	parts := make([]string, 0, 1+len(values))
+	seen := make(map[string]bool)
+	for _, part := range strings.Split(beta, ",") {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" || seen[trimmed] {
+			continue
+		}
+		parts = append(parts, trimmed)
+		seen[trimmed] = true
+	}
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" || seen[trimmed] {
+			continue
+		}
+		parts = append(parts, trimmed)
+		seen[trimmed] = true
+	}
+	return strings.Join(parts, ",")
+}
+
 func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.AudioRequest) (io.Reader, error) {
 	//TODO implement me
 	return nil, errors.New("not implemented")
@@ -133,11 +155,17 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 	if shouldUseAnthropicBeta(info.ChannelSetting) {
 		clientBeta := strings.TrimSpace(c.GetHeader("anthropic-beta"))
 		if c.GetBool("claude_is_official_cli") && clientBeta != "" {
+			if c.GetBool("claude_context_management_beta_required") {
+				clientBeta = appendAnthropicBeta(clientBeta, "context-management-2025-06-27")
+			}
 			req.Set("anthropic-beta", clientBeta)
 		} else {
 			beta := "claude-code-20250219,oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14"
 			if !c.GetBool("claude_disable_interleaved_thinking") && info != nil && info.RelayMode == relayconstant.RelayModeClaudeMessages {
 				beta = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14"
+			}
+			if c.GetBool("claude_context_management_beta_required") {
+				beta = appendAnthropicBeta(beta, "context-management-2025-06-27")
 			}
 			req.Set("anthropic-beta", beta)
 		}
@@ -202,6 +230,123 @@ func stripThinkingBlocks(body []byte) []byte {
 		return body
 	}
 	return out
+}
+
+func SanitizeClaudeMessagesRaw(raw json.RawMessage) (json.RawMessage, bool) {
+	var msgs []any
+	if err := json.Unmarshal(raw, &msgs); err != nil {
+		return raw, false
+	}
+	if !sanitizeClaudeMessages(msgs) {
+		return raw, false
+	}
+	patched, err := json.Marshal(msgs)
+	if err != nil {
+		return raw, false
+	}
+	return patched, true
+}
+
+func SanitizeEmptyClaudeTextBlocks(body []byte) []byte {
+	var root map[string]any
+	if err := json.Unmarshal(body, &root); err != nil {
+		return body
+	}
+	msgs, ok := root["messages"].([]any)
+	if !ok {
+		return body
+	}
+	if !sanitizeClaudeMessages(msgs) {
+		return body
+	}
+	root["messages"] = msgs
+	out, err := json.Marshal(root)
+	if err != nil {
+		return body
+	}
+	return out
+}
+
+func sanitizeClaudeMessages(msgs []any) bool {
+	changed := false
+	for i := range msgs {
+		msg, ok := msgs[i].(map[string]any)
+		if !ok {
+			continue
+		}
+		content := msg["content"]
+		if text, ok := content.(string); ok {
+			if strings.TrimSpace(text) == "" {
+				msg["content"] = "..."
+				msgs[i] = msg
+				changed = true
+			}
+			continue
+		}
+		sanitized, blockChanged, ok := sanitizeClaudeContentTextBlocks(content)
+		if !ok {
+			continue
+		}
+		if len(sanitized) == 0 {
+			sanitized = []any{map[string]any{
+				"type": "text",
+				"text": "...",
+			}}
+			blockChanged = true
+		}
+		if blockChanged {
+			msg["content"] = sanitized
+			msgs[i] = msg
+			changed = true
+		}
+	}
+	return changed
+}
+
+func sanitizeClaudeContentTextBlocks(content any) ([]any, bool, bool) {
+	blocks, ok := content.([]any)
+	if !ok {
+		return nil, false, false
+	}
+	sanitized := make([]any, 0, len(blocks))
+	changed := false
+	for _, block := range blocks {
+		blockMap, ok := block.(map[string]any)
+		if !ok {
+			sanitized = append(sanitized, block)
+			continue
+		}
+		blockType, _ := blockMap["type"].(string)
+		if blockType == "text" {
+			text, _ := blockMap["text"].(string)
+			if strings.TrimSpace(text) == "" {
+				changed = true
+				continue
+			}
+		}
+		if blockType == "tool_result" {
+			if text, ok := blockMap["content"].(string); ok {
+				if strings.TrimSpace(text) == "" {
+					blockMap["content"] = "..."
+					changed = true
+				}
+			} else if nested, nestedChanged, nestedOK := sanitizeClaudeContentTextBlocks(blockMap["content"]); nestedOK {
+				if len(nested) == 0 {
+					nested = []any{map[string]any{
+						"type": "text",
+						"text": "...",
+					}}
+					nestedChanged = true
+				}
+				if nestedChanged {
+					blockMap["content"] = nested
+					changed = true
+				}
+			}
+		}
+		sanitized = append(sanitized, blockMap)
+	}
+	return sanitized, changed, true
 }
 
 func (a *Adaptor) ConvertRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) (any, error) {
@@ -296,6 +441,7 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 	if info != nil && info.RelayMode != relayconstant.RelayModeClaudeMessages {
 		bodyBytes = ensureMetadataUserID(bodyBytes, info.ApiKey)
 	}
+	bodyBytes = SanitizeEmptyClaudeTextBlocks(bodyBytes)
 
 	attempt := 0
 	doOnce := func() (*http.Response, error) {
@@ -326,7 +472,7 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 				c.Set("claude_disable_interleaved_thinking", true)
 				retryBody := bodyBytes
 				if info != nil && info.RelayMode == relayconstant.RelayModeClaudeMessages {
-					retryBody = stripThinkingBlocks(bodyBytes)
+					retryBody = SanitizeEmptyClaudeTextBlocks(stripThinkingBlocks(bodyBytes))
 				}
 				attempt++
 				req, buildErr := channel.BuildAPIRequest(a, c, info, bytes.NewReader(retryBody))

@@ -74,6 +74,7 @@ func PrepareClaudeCodeMessagesRequest(c *gin.Context, relayInfo *relaycommon.Rel
 	if shouldUseDeepSeekV4Compatibility(relayInfo) {
 		applyDeepSeekV4ThinkingCompatibility(bodyMap)
 	}
+	applyClaudeCodeContextManagementRules(c, relayInfo, claudeReq.Model, bodyMap)
 	if messagesRaw, ok := bodyMap["messages"]; ok {
 		patchedMessages := messagesRaw
 		messagesChanged := false
@@ -84,6 +85,10 @@ func PrepareClaudeCodeMessagesRequest(c *gin.Context, relayInfo *relaycommon.Rel
 			}
 		}
 		if normalized, changed := normalizeInvalidToolUseIDInMessagesRaw(patchedMessages); changed {
+			patchedMessages = normalized
+			messagesChanged = true
+		}
+		if normalized, changed := claudecode.SanitizeClaudeMessagesRaw(patchedMessages); changed {
 			patchedMessages = normalized
 			messagesChanged = true
 		}
@@ -476,6 +481,89 @@ func extractThinkingText(block map[string]any) string {
 		}
 	}
 	return ""
+}
+
+func isClaudeHaiku45Model(model string) bool {
+	return strings.Contains(strings.ToLower(strings.TrimSpace(model)), "claude-haiku-4-5")
+}
+
+func sanitizeClaudeContextManagementRaw(raw json.RawMessage) (json.RawMessage, bool) {
+	var contextManagement map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &contextManagement); err != nil || contextManagement == nil {
+		return nil, false
+	}
+	editsRaw, ok := contextManagement["edits"]
+	if !ok {
+		return nil, false
+	}
+	var edits []json.RawMessage
+	if err := json.Unmarshal(editsRaw, &edits); err != nil || len(edits) == 0 {
+		return nil, false
+	}
+	patched, err := json.Marshal(map[string]json.RawMessage{
+		"edits": editsRaw,
+	})
+	if err != nil {
+		return nil, false
+	}
+	return patched, true
+}
+
+func applyClaudeCodeContextManagementRules(c *gin.Context, relayInfo *relaycommon.RelayInfo, model string, bodyMap map[string]json.RawMessage) {
+	if bodyMap == nil {
+		return
+	}
+	raw, ok := bodyMap["context_management"]
+	if !ok || !hasClaudeRequestRawField(raw) || isClaudeHaiku45Model(model) || !shouldUseClaudeCodeContextManagementBeta(relayInfo) {
+		delete(bodyMap, "context_management")
+		if c != nil {
+			c.Set("claude_context_management_beta_required", false)
+		}
+		return
+	}
+	patched, keep := sanitizeClaudeContextManagementRaw(raw)
+	if !keep {
+		delete(bodyMap, "context_management")
+		if c != nil {
+			c.Set("claude_context_management_beta_required", false)
+		}
+		return
+	}
+	bodyMap["context_management"] = patched
+	if c != nil {
+		c.Set("claude_context_management_beta_required", true)
+	}
+}
+
+func shouldUseClaudeCodeContextManagementBeta(relayInfo *relaycommon.RelayInfo) bool {
+	if relayInfo == nil {
+		return true
+	}
+	setting := relayInfo.ChannelSetting
+	if setting == nil {
+		return true
+	}
+	raw, ok := setting["use_anthropic_beta"]
+	if !ok {
+		return true
+	}
+	switch v := raw.(type) {
+	case bool:
+		return v
+	case string:
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "", "true", "1", "yes", "on":
+			return true
+		case "false", "0", "no", "off":
+			return false
+		default:
+			return true
+		}
+	case float64:
+		return v != 0
+	default:
+		return true
+	}
 }
 
 func normalizeInvalidThinkingInMessagesRaw(raw json.RawMessage) (json.RawMessage, bool) {
