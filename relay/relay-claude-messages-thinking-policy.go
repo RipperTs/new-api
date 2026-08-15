@@ -14,62 +14,24 @@ func shouldUseDeepSeekV4Compatibility(relayInfo *relaycommon.RelayInfo) bool {
 	return ok && strings.EqualFold(strings.TrimSpace(mode), claudeCodeDeepSeekV4CompatibilityMode)
 }
 
-func applyClaudeCodeDefaultEffort(bodyMap map[string]json.RawMessage, relayInfo *relaycommon.RelayInfo) bool {
-	if bodyMap == nil || relayInfo == nil {
-		return false
-	}
-
-	configured, ok := relayInfo.ChannelSetting["default_effort"].(string)
-	if !ok {
-		return false
-	}
-	effort := strings.ToLower(strings.TrimSpace(configured))
-	switch effort {
-	case "auto":
-		return true
-	case "low", "high", "max":
-	default:
-		return false
-	}
-
-	outputConfigRaw, exists := bodyMap["output_config"]
-	if !exists || !hasClaudeRequestRawField(outputConfigRaw) {
-		bodyMap["output_config"] = json.RawMessage(`{"effort":"` + effort + `"}`)
-		return true
-	}
-
-	var outputConfig map[string]any
-	if err := json.Unmarshal(outputConfigRaw, &outputConfig); err != nil || outputConfig == nil {
-		return true
-	}
-	if _, exists := outputConfig["effort"]; exists {
-		return true
-	}
-	outputConfig["effort"] = effort
-	if patched, err := json.Marshal(outputConfig); err == nil {
-		bodyMap["output_config"] = patched
-	}
-	return true
-}
-
-func ensureDeepSeekV4ThinkingOptions(bodyMap map[string]json.RawMessage, hasDefaultEffortSetting bool) {
+func ensureDeepSeekV4ThinkingOptions(bodyMap map[string]json.RawMessage) {
 	if bodyMap == nil {
 		return
 	}
 	if !hasClaudeRequestField(bodyMap, "thinking") {
 		bodyMap["thinking"] = json.RawMessage(`{"type":"enabled"}`)
 	}
-	if !hasDefaultEffortSetting {
-		bodyMap["output_config"] = normalizeDeepSeekV4OutputConfig(bodyMap["output_config"])
+	if outputConfig := normalizeDeepSeekV4OutputConfig(bodyMap["output_config"]); outputConfig != nil {
+		bodyMap["output_config"] = outputConfig
 	}
 }
 
-func applyDeepSeekV4ThinkingCompatibility(bodyMap map[string]json.RawMessage, hasDefaultEffortSetting bool) {
+func applyDeepSeekV4ThinkingCompatibility(bodyMap map[string]json.RawMessage) {
 	if isClaudeThinkingDisabled(bodyMap["thinking"]) || hasIncompleteDeepSeekV4ThinkingHistory(bodyMap["messages"]) {
-		disableDeepSeekV4Thinking(bodyMap, hasDefaultEffortSetting)
+		disableDeepSeekV4Thinking(bodyMap)
 		return
 	}
-	ensureDeepSeekV4ThinkingOptions(bodyMap, hasDefaultEffortSetting)
+	ensureDeepSeekV4ThinkingOptions(bodyMap)
 }
 
 func isClaudeThinkingDisabled(raw json.RawMessage) bool {
@@ -122,14 +84,12 @@ func hasIncompleteDeepSeekV4ThinkingHistory(raw json.RawMessage) bool {
 	return false
 }
 
-func disableDeepSeekV4Thinking(bodyMap map[string]json.RawMessage, hasDefaultEffortSetting bool) {
+func disableDeepSeekV4Thinking(bodyMap map[string]json.RawMessage) {
 	if bodyMap == nil {
 		return
 	}
 	bodyMap["thinking"] = json.RawMessage(`{"type":"disabled"}`)
-	if !hasDefaultEffortSetting {
-		delete(bodyMap, "output_config")
-	}
+	delete(bodyMap, "output_config")
 	delete(bodyMap, "reasoning_effort")
 	delete(bodyMap, "context_management")
 	if stripped, changed := stripThinkingBlocksFromMessagesRaw(bodyMap["messages"]); changed {
@@ -181,8 +141,13 @@ func normalizeDeepSeekV4OutputConfig(raw json.RawMessage) json.RawMessage {
 	if hasClaudeRequestRawField(raw) {
 		var outputConfig map[string]any
 		if err := json.Unmarshal(raw, &outputConfig); err == nil && outputConfig != nil {
-			if rawEffort, ok := outputConfig["effort"].(string); ok && strings.EqualFold(strings.TrimSpace(rawEffort), "max") {
-				effort = "max"
+			if rawEffort, ok := outputConfig["effort"].(string); ok {
+				switch strings.ToLower(strings.TrimSpace(rawEffort)) {
+				case "high":
+					effort = "high"
+				case "max":
+					effort = "max"
+				}
 			}
 		}
 	}

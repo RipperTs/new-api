@@ -71,9 +71,8 @@ func PrepareClaudeCodeMessagesRequest(c *gin.Context, relayInfo *relaycommon.Rel
 	if bodyMap == nil {
 		return fmt.Errorf("bodyMap is nil")
 	}
-	hasDefaultEffortSetting := applyClaudeCodeDefaultEffort(bodyMap, relayInfo)
 	if shouldUseDeepSeekV4Compatibility(relayInfo) {
-		applyDeepSeekV4ThinkingCompatibility(bodyMap, hasDefaultEffortSetting)
+		applyDeepSeekV4ThinkingCompatibility(bodyMap)
 	}
 	removeClaudeCodeContextManagement(bodyMap)
 	removeClaudeCodeToolsInputExamples(bodyMap)

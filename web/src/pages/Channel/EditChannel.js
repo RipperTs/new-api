@@ -45,8 +45,6 @@ const CODEX_OFFICIAL_BASE_URL = 'https://chatgpt.com/backend-api';
 const CLAUDE_OFFICIAL_BASE_URL = 'https://claude.ai';
 const CLAUDE_DEEPSEEK_V4_BASE_URL = 'https://api.deepseek.com/anthropic';
 const CLAUDE_DEEPSEEK_V4_MODE = 'deepseek_v4';
-const CLAUDE_DEFAULT_EFFORT_UNSET = 'unset';
-const CLAUDE_DEFAULT_EFFORTS = ['auto', 'low', 'high', 'max'];
 
 function type2secretPrompt(type) {
   // inputs.type === 15 ? '按照如下格式输入：APIKey|SecretKey' : (inputs.type === 18 ? '按照如下格式输入：APPID|APISecret|APIKey' : '请输入渠道对应的鉴权密钥')
@@ -346,16 +344,6 @@ const EditChannel = (props) => {
     }
     return false;
   };
-  const getClaudeDefaultEffort = () => {
-    const effort = getClaudeSetting().default_effort;
-    if (CLAUDE_DEFAULT_EFFORTS.includes(effort)) {
-      return effort;
-    }
-    if (effort === null) {
-      return CLAUDE_DEFAULT_EFFORT_UNSET;
-    }
-    return isEdit ? CLAUDE_DEFAULT_EFFORT_UNSET : 'high';
-  };
   const getClaudeDeepSeekV4Mode = () => {
     const s = getClaudeSetting();
     return s.compatibility_mode === CLAUDE_DEEPSEEK_V4_MODE;
@@ -371,16 +359,6 @@ const EditChannel = (props) => {
     setInputs((prev) => {
       const s = safeParseJSON(prev.setting);
       const next = { ...s, simulate_claude_code_cli: !!enabled };
-      return { ...prev, setting: JSON.stringify(next, null, 2) };
-    });
-  };
-  const applyClaudeDefaultEffort = (effort) => {
-    setInputs((prev) => {
-      const s = safeParseJSON(prev.setting);
-      const next = {
-        ...s,
-        default_effort: effort === CLAUDE_DEFAULT_EFFORT_UNSET ? null : effort,
-      };
       return { ...prev, setting: JSON.stringify(next, null, 2) };
     });
   };
@@ -906,19 +884,6 @@ const EditChannel = (props) => {
       return;
     }
     let localInputs = { ...inputs };
-    const claudeDefaultEffort = getClaudeDefaultEffort();
-    if (localInputs.type === 44) {
-      const setting = safeParseJSON(localInputs.setting);
-      if (claudeDefaultEffort === CLAUDE_DEFAULT_EFFORT_UNSET) {
-        if (Object.prototype.hasOwnProperty.call(setting, 'default_effort')) {
-          delete setting.default_effort;
-          localInputs.setting = JSON.stringify(setting, null, 2);
-        }
-      } else {
-        setting.default_effort = claudeDefaultEffort;
-        localInputs.setting = JSON.stringify(setting, null, 2);
-      }
-    }
     if (typeof localInputs.setting === 'string') {
       localInputs.setting = localInputs.setting.trim();
     } else {
@@ -1137,33 +1102,6 @@ const EditChannel = (props) => {
                         applyClaudeAuthMode(v);
                       }}
                     />
-                    <div style={{ marginTop: 10 }}>
-                      <Typography.Text strong>
-                        {t('默认推理程度')}：
-                      </Typography.Text>
-                    </div>
-                    <Select
-                      style={{ width: '50%' }}
-                      value={getClaudeDefaultEffort()}
-                      optionList={[
-                        {
-                          label: t('未设置（保持旧版行为）'),
-                          value: CLAUDE_DEFAULT_EFFORT_UNSET,
-                        },
-                        ...CLAUDE_DEFAULT_EFFORTS.map((effort) => ({
-                          label: effort,
-                          value: effort,
-                        })),
-                      ]}
-                      onChange={applyClaudeDefaultEffort}
-                    />
-                    <div style={{ marginTop: 4 }}>
-                      <Typography.Text type='tertiary' size='small'>
-                        {t(
-                          '未设置时保持升级前行为；auto 不追加参数；其他值仅在客户端未配置 output_config.effort 时追加',
-                        )}
-                      </Typography.Text>
-                    </div>
                     <div style={{ marginTop: 10, display: 'flex' }}>
                       <Space>
                         <Checkbox

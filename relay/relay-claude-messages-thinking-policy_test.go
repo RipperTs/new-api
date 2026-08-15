@@ -13,7 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func TestDeepSeekV4CompatibilityDisablesThinkingAndPreservesOutputConfig(t *testing.T) {
+func TestDeepSeekV4CompatibilityDisablesThinkingAndRemovesConflictingFields(t *testing.T) {
 	bodyMap := map[string]json.RawMessage{
 		"thinking":           json.RawMessage(`{"type":"disabled"}`),
 		"output_config":      json.RawMessage(`{"effort":"max"}`),
@@ -27,15 +27,12 @@ func TestDeepSeekV4CompatibilityDisablesThinkingAndPreservesOutputConfig(t *test
 		]`),
 	}
 
-	applyDeepSeekV4ThinkingCompatibility(bodyMap, true)
+	applyDeepSeekV4ThinkingCompatibility(bodyMap)
 
 	if string(bodyMap["thinking"]) != `{"type":"disabled"}` {
 		t.Fatalf("unexpected thinking: %s", bodyMap["thinking"])
 	}
-	if string(bodyMap["output_config"]) != `{"effort":"max"}` {
-		t.Fatalf("output_config should be preserved: %s", bodyMap["output_config"])
-	}
-	for _, key := range []string{"reasoning_effort", "context_management"} {
+	for _, key := range []string{"output_config", "reasoning_effort", "context_management"} {
 		if _, ok := bodyMap[key]; ok {
 			t.Fatalf("expected %s to be removed", key)
 		}
