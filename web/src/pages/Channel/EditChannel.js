@@ -45,6 +45,7 @@ const CODEX_OFFICIAL_BASE_URL = 'https://chatgpt.com/backend-api';
 const CLAUDE_OFFICIAL_BASE_URL = 'https://claude.ai';
 const CLAUDE_DEEPSEEK_V4_BASE_URL = 'https://api.deepseek.com/anthropic';
 const CLAUDE_DEEPSEEK_V4_MODE = 'deepseek_v4';
+const CLAUDE_DEFAULT_EFFORT_UNSET = 'unset';
 const CLAUDE_DEFAULT_EFFORTS = ['auto', 'low', 'high', 'max'];
 
 function type2secretPrompt(type) {
@@ -347,7 +348,13 @@ const EditChannel = (props) => {
   };
   const getClaudeDefaultEffort = () => {
     const effort = getClaudeSetting().default_effort;
-    return CLAUDE_DEFAULT_EFFORTS.includes(effort) ? effort : 'high';
+    if (CLAUDE_DEFAULT_EFFORTS.includes(effort)) {
+      return effort;
+    }
+    if (effort === null) {
+      return CLAUDE_DEFAULT_EFFORT_UNSET;
+    }
+    return isEdit ? CLAUDE_DEFAULT_EFFORT_UNSET : 'high';
   };
   const getClaudeDeepSeekV4Mode = () => {
     const s = getClaudeSetting();
@@ -370,7 +377,10 @@ const EditChannel = (props) => {
   const applyClaudeDefaultEffort = (effort) => {
     setInputs((prev) => {
       const s = safeParseJSON(prev.setting);
-      const next = { ...s, default_effort: effort };
+      const next = {
+        ...s,
+        default_effort: effort === CLAUDE_DEFAULT_EFFORT_UNSET ? null : effort,
+      };
       return { ...prev, setting: JSON.stringify(next, null, 2) };
     });
   };
@@ -896,10 +906,18 @@ const EditChannel = (props) => {
       return;
     }
     let localInputs = { ...inputs };
+    const claudeDefaultEffort = getClaudeDefaultEffort();
     if (localInputs.type === 44) {
       const setting = safeParseJSON(localInputs.setting);
-      setting.default_effort = getClaudeDefaultEffort();
-      localInputs.setting = JSON.stringify(setting, null, 2);
+      if (claudeDefaultEffort === CLAUDE_DEFAULT_EFFORT_UNSET) {
+        if (Object.prototype.hasOwnProperty.call(setting, 'default_effort')) {
+          delete setting.default_effort;
+          localInputs.setting = JSON.stringify(setting, null, 2);
+        }
+      } else {
+        setting.default_effort = claudeDefaultEffort;
+        localInputs.setting = JSON.stringify(setting, null, 2);
+      }
     }
     if (typeof localInputs.setting === 'string') {
       localInputs.setting = localInputs.setting.trim();
@@ -1127,16 +1145,22 @@ const EditChannel = (props) => {
                     <Select
                       style={{ width: '50%' }}
                       value={getClaudeDefaultEffort()}
-                      optionList={CLAUDE_DEFAULT_EFFORTS.map((effort) => ({
-                        label: effort,
-                        value: effort,
-                      }))}
+                      optionList={[
+                        {
+                          label: t('未设置（保持旧版行为）'),
+                          value: CLAUDE_DEFAULT_EFFORT_UNSET,
+                        },
+                        ...CLAUDE_DEFAULT_EFFORTS.map((effort) => ({
+                          label: effort,
+                          value: effort,
+                        })),
+                      ]}
                       onChange={applyClaudeDefaultEffort}
                     />
                     <div style={{ marginTop: 4 }}>
                       <Typography.Text type='tertiary' size='small'>
                         {t(
-                          'auto 不追加参数；其他值仅在客户端未配置 output_config.effort 时追加',
+                          '未设置时保持升级前行为；auto 不追加参数；其他值仅在客户端未配置 output_config.effort 时追加',
                         )}
                       </Typography.Text>
                     </div>

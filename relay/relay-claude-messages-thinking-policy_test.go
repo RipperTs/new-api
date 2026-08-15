@@ -27,7 +27,7 @@ func TestDeepSeekV4CompatibilityDisablesThinkingAndPreservesOutputConfig(t *test
 		]`),
 	}
 
-	applyDeepSeekV4ThinkingCompatibility(bodyMap)
+	applyDeepSeekV4ThinkingCompatibility(bodyMap, true)
 
 	if string(bodyMap["thinking"]) != `{"type":"disabled"}` {
 		t.Fatalf("unexpected thinking: %s", bodyMap["thinking"])
