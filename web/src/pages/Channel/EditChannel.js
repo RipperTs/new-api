@@ -43,7 +43,6 @@ const fetchButtonTips =
   '1. 新建渠道时，请求通过当前浏览器发出；2. 编辑已有渠道，请求通过后端服务器发出';
 const CODEX_OFFICIAL_BASE_URL = 'https://chatgpt.com/backend-api';
 const CLAUDE_OFFICIAL_BASE_URL = 'https://claude.ai';
-const CLAUDE_DEEPSEEK_V4_BASE_URL = 'https://api.deepseek.com/anthropic';
 const CLAUDE_DEEPSEEK_V4_MODE = 'deepseek_v4';
 
 function type2secretPrompt(type) {
@@ -371,11 +370,7 @@ const EditChannel = (props) => {
         next.auth_mode = 'api_key';
         delete next.claude_oauth_session_id;
         delete next.claude_email;
-        return {
-          ...prev,
-          base_url: CLAUDE_DEEPSEEK_V4_BASE_URL,
-          setting: JSON.stringify(next, null, 2),
-        };
+        return { ...prev, setting: JSON.stringify(next, null, 2) };
       }
       delete next.compatibility_mode;
       return { ...prev, setting: JSON.stringify(next, null, 2) };
@@ -1102,7 +1097,7 @@ const EditChannel = (props) => {
                         applyClaudeAuthMode(v);
                       }}
                     />
-                    <div style={{ marginTop: 10, display: 'flex' }}>
+                    <div style={{ marginTop: 10 }}>
                       <Space>
                         <Checkbox
                           checked={getClaudeDeepSeekV4Mode()}
@@ -1113,9 +1108,16 @@ const EditChannel = (props) => {
                           }}
                         />
                         <Typography.Text strong>
-                          适配 DeepSeek V4 官方渠道
+                          适配强制的推理程度
                         </Typography.Text>
                       </Space>
+                      <div style={{ marginTop: 4 }}>
+                        <Typography.Text type='tertiary' size='small'>
+                          开启后会按 DeepSeek V4 兼容规则处理
+                          thinking，并将推理程度规范为 high 或
+                          max，适用于要求强制推理参数组合的上游接口。
+                        </Typography.Text>
+                      </div>
                     </div>
                     <div style={{ marginTop: 10, display: 'flex' }}>
                       <Space>
