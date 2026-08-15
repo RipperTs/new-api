@@ -14,15 +14,48 @@ func shouldUseDeepSeekV4Compatibility(relayInfo *relaycommon.RelayInfo) bool {
 	return ok && strings.EqualFold(strings.TrimSpace(mode), claudeCodeDeepSeekV4CompatibilityMode)
 }
 
+func applyClaudeCodeDefaultEffort(bodyMap map[string]json.RawMessage, relayInfo *relaycommon.RelayInfo) {
+	if bodyMap == nil {
+		return
+	}
+
+	effort := "high"
+	if relayInfo != nil {
+		if configured, ok := relayInfo.ChannelSetting["default_effort"].(string); ok {
+			switch strings.ToLower(strings.TrimSpace(configured)) {
+			case "auto":
+				return
+			case "low", "high", "max":
+				effort = strings.ToLower(strings.TrimSpace(configured))
+			}
+		}
+	}
+
+	outputConfigRaw, exists := bodyMap["output_config"]
+	if !exists || !hasClaudeRequestRawField(outputConfigRaw) {
+		bodyMap["output_config"] = json.RawMessage(`{"effort":"` + effort + `"}`)
+		return
+	}
+
+	var outputConfig map[string]any
+	if err := json.Unmarshal(outputConfigRaw, &outputConfig); err != nil || outputConfig == nil {
+		return
+	}
+	if _, exists := outputConfig["effort"]; exists {
+		return
+	}
+	outputConfig["effort"] = effort
+	if patched, err := json.Marshal(outputConfig); err == nil {
+		bodyMap["output_config"] = patched
+	}
+}
+
 func ensureDeepSeekV4ThinkingOptions(bodyMap map[string]json.RawMessage) {
 	if bodyMap == nil {
 		return
 	}
 	if !hasClaudeRequestField(bodyMap, "thinking") {
 		bodyMap["thinking"] = json.RawMessage(`{"type":"enabled"}`)
-	}
-	if outputConfig := normalizeDeepSeekV4OutputConfig(bodyMap["output_config"]); outputConfig != nil {
-		bodyMap["output_config"] = outputConfig
 	}
 }
 
@@ -89,7 +122,6 @@ func disableDeepSeekV4Thinking(bodyMap map[string]json.RawMessage) {
 		return
 	}
 	bodyMap["thinking"] = json.RawMessage(`{"type":"disabled"}`)
-	delete(bodyMap, "output_config")
 	delete(bodyMap, "reasoning_effort")
 	delete(bodyMap, "context_management")
 	if stripped, changed := stripThinkingBlocksFromMessagesRaw(bodyMap["messages"]); changed {
@@ -134,24 +166,6 @@ func stripThinkingBlocksFromMessagesRaw(raw json.RawMessage) (json.RawMessage, b
 		return raw, false
 	}
 	return patched, true
-}
-
-func normalizeDeepSeekV4OutputConfig(raw json.RawMessage) json.RawMessage {
-	effort := "high"
-	if hasClaudeRequestRawField(raw) {
-		var outputConfig map[string]any
-		if err := json.Unmarshal(raw, &outputConfig); err == nil && outputConfig != nil {
-			if rawEffort, ok := outputConfig["effort"].(string); ok {
-				switch strings.ToLower(strings.TrimSpace(rawEffort)) {
-				case "high":
-					effort = "high"
-				case "max":
-					effort = "max"
-				}
-			}
-		}
-	}
-	return json.RawMessage(`{"effort":"` + effort + `"}`)
 }
 
 func hasClaudeRequestField(bodyMap map[string]json.RawMessage, key string) bool {
