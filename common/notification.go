@@ -101,3 +101,39 @@ func SendConfiguredFeishuNotification(title string, content string, groupExpress
 	}
 	return nil
 }
+
+func SendConfiguredDingTalkNotification(title string, content string, groupExpression string) error {
+	if !DingTalkNotificationEnabled {
+		return nil
+	}
+	if DingTalkWebhookURL == "" {
+		return nil
+	}
+	if !ShouldNotifyByGroupExpression(DingTalkNotificationGroups, groupExpression) {
+		return nil
+	}
+
+	cacheKey := ""
+	if RedisEnabled && RDB != nil {
+		cacheText := strings.TrimSpace(groupExpression) + "\n" + strings.TrimSpace(title) + "\n" + strings.TrimSpace(content)
+		normalized := normalizeContentForCache(cacheText)
+		if len(normalized) > 100 {
+			normalized = normalized[:100]
+		}
+		hash := md5.Sum([]byte(normalized))
+		cacheKey = "dingtalk_cache:" + hex.EncodeToString(hash[:])
+		redisValue, _ := RedisGet(cacheKey)
+		if redisValue != "" {
+			return nil
+		}
+	}
+
+	err := SendDingTalkWebhook(DingTalkWebhookURL, DingTalkWebhookSecret, title, content)
+	if err != nil {
+		return err
+	}
+	if cacheKey != "" {
+		_ = RedisSet(cacheKey, "1", time.Duration(GetEnvOrDefault("INTERVAL_TIME", 60))*time.Second)
+	}
+	return nil
+}

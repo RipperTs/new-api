@@ -57,10 +57,14 @@ func InitOptionMap() {
 	common.OptionMap["NotificationEmail"] = common.NotificationEmail
 	common.OptionMap["NotificationCcEmails"] = common.JoinEmailRecipients(common.NotificationCcEmails)
 	common.OptionMap["FeishuWebhookURL"] = common.FeishuWebhookURL
+	common.OptionMap["DingTalkWebhookURL"] = common.DingTalkWebhookURL
+	common.OptionMap["DingTalkWebhookSecret"] = ""
 	common.OptionMap["EmailNotificationEnabled"] = strconv.FormatBool(common.EmailNotificationEnabled)
 	common.OptionMap["EmailNotificationGroups"] = common.JoinEmailRecipients(common.EmailNotificationGroups)
 	common.OptionMap["FeishuNotificationEnabled"] = strconv.FormatBool(common.FeishuNotificationEnabled)
 	common.OptionMap["FeishuNotificationGroups"] = common.JoinEmailRecipients(common.FeishuNotificationGroups)
+	common.OptionMap["DingTalkNotificationEnabled"] = strconv.FormatBool(common.DingTalkNotificationEnabled)
+	common.OptionMap["DingTalkNotificationGroups"] = common.JoinEmailRecipients(common.DingTalkNotificationGroups)
 	common.OptionMap["Notice"] = ""
 	common.OptionMap["About"] = ""
 	common.OptionMap["HomePageContent"] = ""
@@ -239,6 +243,8 @@ func updateOptionMap(key string, value string) (err error) {
 			common.EmailNotificationEnabled = boolValue
 		case "FeishuNotificationEnabled":
 			common.FeishuNotificationEnabled = boolValue
+		case "DingTalkNotificationEnabled":
+			common.DingTalkNotificationEnabled = boolValue
 		}
 	}
 	switch key {
@@ -261,10 +267,16 @@ func updateOptionMap(key string, value string) (err error) {
 		common.NotificationCcEmails = common.SplitEmailRecipients(value)
 	case "FeishuWebhookURL":
 		common.FeishuWebhookURL = strings.TrimSpace(value)
+	case "DingTalkWebhookURL":
+		common.DingTalkWebhookURL = strings.TrimSpace(value)
+	case "DingTalkWebhookSecret":
+		common.DingTalkWebhookSecret = strings.TrimSpace(value)
 	case "EmailNotificationGroups":
 		common.EmailNotificationGroups = common.SplitNotificationGroups(value)
 	case "FeishuNotificationGroups":
 		common.FeishuNotificationGroups = common.SplitNotificationGroups(value)
+	case "DingTalkNotificationGroups":
+		common.DingTalkNotificationGroups = common.SplitNotificationGroups(value)
 	case "ServerAddress":
 		setting.ServerAddress = value
 	case "WorkerUrl":

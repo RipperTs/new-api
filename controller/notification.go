@@ -27,9 +27,9 @@ type newAPIWebhookNotificationRequest struct {
 }
 
 type notificationPayload struct {
-	Title         string
-	FeishuContent string
-	EmailContent  string
+	Title        string
+	TextContent  string
+	EmailContent string
 }
 
 func SendWebhookNotification(c *gin.Context) {
@@ -37,7 +37,7 @@ func SendWebhookNotification(c *gin.Context) {
 	if channel == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"message": "请通过 channel 参数指定通知渠道：email 或 feishu",
+			"message": "请通过 channel 参数指定通知渠道：email、feishu 或 dingtalk",
 		})
 		return
 	}
@@ -98,6 +98,8 @@ func parseNotificationChannel(c *gin.Context) string {
 		return "email"
 	case "feishu", "lark":
 		return "feishu"
+	case "dingtalk":
+		return "dingtalk"
 	default:
 		return ""
 	}
@@ -144,9 +146,9 @@ func parseNewAPINotificationPayload(body []byte) (*notificationPayload, error) {
 	lines = append(lines, "内容："+parsedContent)
 
 	return &notificationPayload{
-		Title:         title,
-		FeishuContent: strings.Join(lines, "\n"),
-		EmailContent:  buildEmailHTML(lines),
+		Title:        title,
+		TextContent:  strings.Join(lines, "\n"),
+		EmailContent: buildEmailHTML(lines),
 	}, nil
 }
 
@@ -179,9 +181,9 @@ func parsePlainNotificationPayload(body []byte) (*notificationPayload, error) {
 
 	lines := []string{content}
 	return &notificationPayload{
-		Title:         title,
-		FeishuContent: content,
-		EmailContent:  buildEmailHTML(lines),
+		Title:        title,
+		TextContent:  content,
+		EmailContent: buildEmailHTML(lines),
 	}, nil
 }
 
@@ -277,7 +279,12 @@ func dispatchNotification(channel string, payload *notificationPayload) error {
 		if strings.TrimSpace(common.FeishuWebhookURL) == "" {
 			return fmt.Errorf("系统未配置 FEISHU_WEBHOOK_URL")
 		}
-		return common.SendFeishuWebhook(common.FeishuWebhookURL, payload.Title, payload.FeishuContent)
+		return common.SendFeishuWebhook(common.FeishuWebhookURL, payload.Title, payload.TextContent)
+	case "dingtalk":
+		if strings.TrimSpace(common.DingTalkWebhookURL) == "" {
+			return fmt.Errorf("系统未配置 DINGTALK_WEBHOOK_URL")
+		}
+		return common.SendDingTalkWebhook(common.DingTalkWebhookURL, common.DingTalkWebhookSecret, payload.Title, payload.TextContent)
 	default:
 		return fmt.Errorf("不支持的通知渠道：%s", channel)
 	}

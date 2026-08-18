@@ -86,6 +86,7 @@ func SetApiRouter(router *gin.Engine) {
 			optionRoute.PUT("/", controller.UpdateOption)
 			optionRoute.POST("/notification/mail", controller.SendNotificationMail)
 			optionRoute.POST("/notification/feishu", controller.SendNotificationFeishu)
+			optionRoute.POST("/notification/dingtalk", controller.SendNotificationDingTalk)
 			optionRoute.POST("/rest_model_ratio", controller.ResetModelRatio)
 		}
 		notificationRoute := apiRouter.Group("/notification")

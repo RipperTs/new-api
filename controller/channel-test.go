@@ -493,6 +493,12 @@ func testAllChannels(notify bool) error {
 					common.SysError(fmt.Sprintf("failed to send feishu notification: %s", err.Error()))
 				}
 			}
+			if common.DingTalkNotificationEnabled && common.DingTalkWebhookURL != "" {
+				err := common.SendDingTalkWebhook(common.DingTalkWebhookURL, common.DingTalkWebhookSecret, subject, content)
+				if err != nil {
+					common.SysError(fmt.Sprintf("failed to send dingtalk notification: %s", err.Error()))
+				}
+			}
 		}
 	})
 	return nil

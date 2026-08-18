@@ -82,6 +82,10 @@ var EmailNotificationGroups = []string{}
 var FeishuWebhookURL = strings.TrimSpace(os.Getenv("FEISHU_WEBHOOK_URL"))
 var FeishuNotificationEnabled = false
 var FeishuNotificationGroups = []string{}
+var DingTalkWebhookURL = strings.TrimSpace(os.Getenv("DINGTALK_WEBHOOK_URL"))
+var DingTalkWebhookSecret = strings.TrimSpace(os.Getenv("DINGTALK_WEBHOOK_SECRET"))
+var DingTalkNotificationEnabled = false
+var DingTalkNotificationGroups = []string{}
 
 var GitHubClientId = ""
 var GitHubClientSecret = ""

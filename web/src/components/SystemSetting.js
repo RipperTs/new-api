@@ -35,6 +35,8 @@ const SystemSetting = () => {
     NotificationEmail: '',
     NotificationCcEmails: '',
     FeishuWebhookURL: '',
+    DingTalkWebhookURL: '',
+    DingTalkWebhookSecret: '',
     ServerAddress: '',
     WorkerUrl: '',
     WorkerValidKey: '',
@@ -68,6 +70,8 @@ const SystemSetting = () => {
   });
   const [originInputs, setOriginInputs] = useState({});
   let [loading, setLoading] = useState(false);
+  const [clearDingTalkWebhookSecret, setClearDingTalkWebhookSecret] =
+    useState(false);
   const [EmailDomainWhitelist, setEmailDomainWhitelist] = useState([]);
   const [restrictedDomainInput, setRestrictedDomainInput] = useState('');
   const [showPasswordWarningModal, setShowPasswordWarningModal] =
@@ -156,6 +160,9 @@ const SystemSetting = () => {
       setShowPasswordWarningModal(true);
       return;
     }
+    if (name === 'DingTalkWebhookSecret') {
+      setClearDingTalkWebhookSecret(false);
+    }
     if (
       name === 'Notice' ||
       (name.startsWith('SMTP') && name !== 'SMTPSSLEnabled') ||
@@ -165,6 +172,8 @@ const SystemSetting = () => {
       name === 'NotificationEmail' ||
       name === 'NotificationCcEmails' ||
       name === 'FeishuWebhookURL' ||
+      name === 'DingTalkWebhookURL' ||
+      name === 'DingTalkWebhookSecret' ||
       name === 'EpayId' ||
       name === 'EpayKey' ||
       name === 'Price' ||
@@ -259,6 +268,18 @@ const SystemSetting = () => {
     if (originInputs['FeishuWebhookURL'] !== inputs.FeishuWebhookURL) {
       await updateOption('FeishuWebhookURL', inputs.FeishuWebhookURL);
     }
+    if (originInputs['DingTalkWebhookURL'] !== inputs.DingTalkWebhookURL) {
+      await updateOption('DingTalkWebhookURL', inputs.DingTalkWebhookURL);
+    }
+    if (clearDingTalkWebhookSecret) {
+      await updateOption('DingTalkWebhookSecret', '');
+    } else if (
+      originInputs['DingTalkWebhookSecret'] !== inputs.DingTalkWebhookSecret &&
+      inputs.DingTalkWebhookSecret !== undefined &&
+      inputs.DingTalkWebhookSecret !== ''
+    ) {
+      await updateOption('DingTalkWebhookSecret', inputs.DingTalkWebhookSecret);
+    }
   };
 
   const sendNotificationMail = async () => {
@@ -284,6 +305,32 @@ const SystemSetting = () => {
     const { success, message } = res.data;
     if (success) {
       showSuccess('飞书通知已发送，请检查飞书群消息');
+    } else {
+      showError(message);
+    }
+    setLoading(false);
+  };
+
+  const sendNotificationDingTalk = async () => {
+    setLoading(true);
+    const requestData = {
+      dingtalk_webhook_url: inputs.DingTalkWebhookURL,
+    };
+    if (clearDingTalkWebhookSecret) {
+      requestData.dingtalk_webhook_secret = '';
+    } else if (
+      inputs.DingTalkWebhookSecret !== undefined &&
+      inputs.DingTalkWebhookSecret !== ''
+    ) {
+      requestData.dingtalk_webhook_secret = inputs.DingTalkWebhookSecret;
+    }
+    const res = await API.post(
+      '/api/option/notification/dingtalk',
+      requestData,
+    );
+    const { success, message } = res.data;
+    if (success) {
+      showSuccess('钉钉通知已发送，请检查钉钉群消息');
     } else {
       showError(message);
     }
@@ -720,7 +767,7 @@ const SystemSetting = () => {
           <Divider />
           <Header as='h3' inverted={isDark}>
             通知设置
-            <Header.Subheader>用于接收请求异常等系统邮件通知</Header.Subheader>
+            <Header.Subheader>用于接收请求异常等系统通知</Header.Subheader>
           </Header>
           <Form.Group widths={3}>
             <Form.Input
@@ -748,6 +795,40 @@ const SystemSetting = () => {
               placeholder='例如：https://open.feishu.cn/open-apis/bot/v2/hook/...'
             />
           </Form.Group>
+          <Form.Group widths={2}>
+            <Form.Input
+              label='钉钉 Webhook'
+              name='DingTalkWebhookURL'
+              onChange={handleInputChange}
+              autoComplete='new-password'
+              value={inputs.DingTalkWebhookURL}
+              placeholder='例如：https://oapi.dingtalk.com/robot/send?access_token=...'
+            />
+            <Form.Input
+              label='钉钉加签密钥'
+              name='DingTalkWebhookSecret'
+              onChange={handleInputChange}
+              type='password'
+              autoComplete='new-password'
+              value={inputs.DingTalkWebhookSecret}
+              placeholder='加签机器人填写，已保存密钥不会回显'
+            />
+          </Form.Group>
+          <Form.Group>
+            <Form.Checkbox
+              label='清除已保存的钉钉加签密钥'
+              checked={clearDingTalkWebhookSecret}
+              onChange={(e, { checked }) => {
+                setClearDingTalkWebhookSecret(checked);
+                if (checked) {
+                  setInputs((inputs) => ({
+                    ...inputs,
+                    DingTalkWebhookSecret: '',
+                  }));
+                }
+              }}
+            />
+          </Form.Group>
           <Form.Group>
             <Form.Button onClick={submitNotificationSettings}>
               保存通知设置
@@ -757,6 +838,9 @@ const SystemSetting = () => {
             </Form.Button>
             <Form.Button type='button' onClick={sendNotificationFeishu}>
               发送飞书确认通知
+            </Form.Button>
+            <Form.Button type='button' onClick={sendNotificationDingTalk}>
+              发送钉钉确认通知
             </Form.Button>
           </Form.Group>
           <Divider />

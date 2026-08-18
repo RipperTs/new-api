@@ -21,6 +21,7 @@ Authorization: Bearer <NOTIFICATION_WEBHOOK_SECRET>
 - `channel`：通知渠道，必填。支持：
   - `email`（或 `mail`）
   - `feishu`（或 `lark`）
+  - `dingtalk`
 - `format`：可选，默认空字符串
   - 空：按纯文本模式解析
   - `new-api`：按结构化格式解析
@@ -89,10 +90,29 @@ Authorization: Bearer <NOTIFICATION_WEBHOOK_SECRET>
 }
 ```
 
+钉钉通知使用 `DINGTALK_WEBHOOK_URL`，加签机器人还需配置 `DINGTALK_WEBHOOK_SECRET`。这两项也可以在管理端的通知设置中维护。
+
+钉钉群机器人的创建、Webhook 获取和安全设置请参考[钉钉自定义机器人接入文档](https://open.dingtalk.com/document/orgapp/custom-robot-access)。
+
 ## 调用示例
 
 ```bash
 curl -X POST 'https://your-domain.com/api/notification/send?channel=feishu&format=new-api' \
+  -H 'Authorization: Bearer your_webhook_secret' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "type": "quota_exceed",
+    "title": "额度预警通知",
+    "content": "您的额度即将用尽，当前剩余额度为 {{value}}",
+    "values": ["$0.99"],
+    "timestamp": 1739950503
+  }'
+```
+
+钉钉渠道只需将 `channel` 改为 `dingtalk`：
+
+```bash
+curl -X POST 'https://your-domain.com/api/notification/send?channel=dingtalk&format=new-api' \
   -H 'Authorization: Bearer your_webhook_secret' \
   -H 'Content-Type: application/json' \
   -d '{

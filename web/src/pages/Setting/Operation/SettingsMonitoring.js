@@ -12,6 +12,8 @@ const defaultInputs = {
   EmailNotificationGroups: [],
   FeishuNotificationEnabled: false,
   FeishuNotificationGroups: [],
+  DingTalkNotificationEnabled: false,
+  DingTalkNotificationGroups: [],
 };
 
 const parseNotificationGroups = (value) => {
@@ -49,6 +51,9 @@ export default function SettingsMonitoring(props) {
       FeishuNotificationGroups: parseNotificationGroups(
         inputs.FeishuNotificationGroups,
       ).join(','),
+      DingTalkNotificationGroups: parseNotificationGroups(
+        inputs.DingTalkNotificationGroups,
+      ).join(','),
     };
     const normalizedInputsRow = {
       ...inputsRow,
@@ -57,6 +62,9 @@ export default function SettingsMonitoring(props) {
       ).join(','),
       FeishuNotificationGroups: parseNotificationGroups(
         inputsRow.FeishuNotificationGroups,
+      ).join(','),
+      DingTalkNotificationGroups: parseNotificationGroups(
+        inputsRow.DingTalkNotificationGroups,
       ).join(','),
     };
     const updateArray = Object.keys(normalizedInputs).reduce((result, key) => {
@@ -124,6 +132,9 @@ export default function SettingsMonitoring(props) {
     );
     currentInputs.FeishuNotificationGroups = parseNotificationGroups(
       currentInputs.FeishuNotificationGroups,
+    );
+    currentInputs.DingTalkNotificationGroups = parseNotificationGroups(
+      currentInputs.DingTalkNotificationGroups,
     );
     setInputs(currentInputs);
     setInputsRow(structuredClone(currentInputs));
@@ -242,6 +253,21 @@ export default function SettingsMonitoring(props) {
                   }
                 />
               </Col>
+              <Col span={8}>
+                <Form.Switch
+                  field={'DingTalkNotificationEnabled'}
+                  label={t('启用钉钉异常通知')}
+                  size='default'
+                  checkedText='｜'
+                  uncheckedText='〇'
+                  onChange={(value) =>
+                    setInputs({
+                      ...inputs,
+                      DingTalkNotificationEnabled: value,
+                    })
+                  }
+                />
+              </Col>
             </Row>
             <Row gutter={16}>
               <Col span={16}>
@@ -305,6 +331,39 @@ export default function SettingsMonitoring(props) {
                 >
                   {t(
                     '仅当这些分组发生渠道异常时发送飞书告警，留空表示全部分组',
+                  )}
+                </div>
+              </Col>
+            </Row>
+            <Row gutter={16}>
+              <Col span={16}>
+                <div
+                  style={{ marginBottom: 8, color: 'var(--semi-color-text-2)' }}
+                >
+                  {t('钉钉告警分组')}
+                </div>
+                <Select
+                  multiple
+                  search
+                  placeholder={t('留空表示全部分组')}
+                  optionList={groupOptions}
+                  value={inputs.DingTalkNotificationGroups}
+                  onChange={(value) =>
+                    setInputs({
+                      ...inputs,
+                      DingTalkNotificationGroups: value || [],
+                    })
+                  }
+                />
+                <div
+                  style={{
+                    marginTop: 8,
+                    color: 'var(--semi-color-text-2)',
+                    fontSize: 12,
+                  }}
+                >
+                  {t(
+                    '仅当这些分组发生渠道异常时发送钉钉告警，留空表示全部分组',
                   )}
                 </div>
               </Col>

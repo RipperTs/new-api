@@ -380,6 +380,9 @@ func processChannelError(requestId string, group string, channelId int, channelT
 		if sendErr := common.SendConfiguredFeishuNotification(subject, content, group); sendErr != nil {
 			common.SysError(fmt.Sprintf("failed to send feishu notification: %s", sendErr.Error()))
 		}
+		if sendErr := common.SendConfiguredDingTalkNotification(subject, content, group); sendErr != nil {
+			common.SysError(fmt.Sprintf("failed to send dingtalk notification: %s", sendErr.Error()))
+		}
 	}
 
 	if service.ShouldDisableChannel(channelType, err) && autoBan {

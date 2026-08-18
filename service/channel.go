@@ -37,6 +37,9 @@ func sendChannelStatusNotification(subject string, content string, groupExpressi
 	if err := common.SendConfiguredFeishuNotification(subject, content, groupExpression); err != nil {
 		common.SysError(fmt.Sprintf("failed to send feishu notification: %s", err.Error()))
 	}
+	if err := common.SendConfiguredDingTalkNotification(subject, content, groupExpression); err != nil {
+		common.SysError(fmt.Sprintf("failed to send dingtalk notification: %s", err.Error()))
+	}
 }
 
 // ShouldDisableChannel 根据错误信息判断是否应自动禁用通道

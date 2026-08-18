@@ -122,6 +122,15 @@ func UpdateOption(c *gin.Context) {
 			})
 			return
 		}
+	case "DingTalkWebhookURL":
+		err = common.Validate.Var(strings.TrimSpace(option.Value), "omitempty,url")
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "钉钉 Webhook 地址格式不正确",
+			})
+			return
+		}
 	}
 	err = model.UpdateOption(option.Key, option.Value)
 	if err != nil {
@@ -145,6 +154,11 @@ type NotificationMailRequest struct {
 
 type NotificationFeishuRequest struct {
 	FeishuWebhookURL string `json:"feishu_webhook_url"`
+}
+
+type NotificationDingTalkRequest struct {
+	DingTalkWebhookURL    string  `json:"dingtalk_webhook_url"`
+	DingTalkWebhookSecret *string `json:"dingtalk_webhook_secret"`
 }
 
 func SendNotificationMail(c *gin.Context) {
@@ -218,6 +232,47 @@ func SendNotificationFeishu(c *gin.Context) {
 		"系统名称：" + common.SystemName + "\n" +
 		"送达时间：" + time.Now().Format("2006-01-02 15:04:05")
 	err = common.SendFeishuWebhook(req.FeishuWebhookURL, title, content)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+	})
+}
+
+func SendNotificationDingTalk(c *gin.Context) {
+	var req NotificationDingTalkRequest
+	err := json.NewDecoder(c.Request.Body).Decode(&req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "无效的参数",
+		})
+		return
+	}
+	req.DingTalkWebhookURL = strings.TrimSpace(req.DingTalkWebhookURL)
+	if err = common.Validate.Var(req.DingTalkWebhookURL, "required,url"); err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "请填写正确的钉钉 Webhook 地址",
+		})
+		return
+	}
+
+	title := common.SystemName + "通知已送达"
+	content := "当前系统的异常通知链路已可正常投递。\n" +
+		"系统名称：" + common.SystemName + "\n" +
+		"送达时间：" + time.Now().Format("2006-01-02 15:04:05")
+	secret := common.DingTalkWebhookSecret
+	if req.DingTalkWebhookSecret != nil {
+		secret = strings.TrimSpace(*req.DingTalkWebhookSecret)
+	}
+	err = common.SendDingTalkWebhook(req.DingTalkWebhookURL, secret, title, content)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
