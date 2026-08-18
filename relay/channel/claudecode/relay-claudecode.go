@@ -24,7 +24,7 @@ var claudeToolUseInvalidCharRegex = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
 
 func generateClaudeCodeUserID(apiKey string) string {
 	hash := sha256.Sum256([]byte(apiKey))
-	return fmt.Sprintf("user_%x_account__session_%s", hash, uuid.New().String())
+	return fmt.Sprintf(`{"device_id":"%x","account_uuid":"","session_id":"%s"}`, hash, uuid.New().String())
 }
 
 func GenerateClaudeCodeUserID(apiKey string) string {
@@ -231,8 +231,7 @@ func RequestOpenAI2ClaudeMessage(textRequest dto.GeneralOpenAIRequest, info *rel
 		},
 	}
 
-	// 基于渠道 Key 生成 user_id
-	// 格式: user_<64hex>_account__session_<uuid>
+	// 基于渠道 Key 生成 Claude Code JSON 格式的 user_id
 	key := ""
 	if info != nil {
 		key = info.ApiKey

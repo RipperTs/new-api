@@ -27,6 +27,7 @@ const claudeCodeDeepSeekV4CompatibilityMode = "deepseek_v4"
 var claudeCLIUserAgentRegex = regexp.MustCompile(`(?i)^claude-cli\/[\d.]+(?:[-\w]*)?\s+\(external,\s*(?:cli|claude-[\w-]+|sdk-[\w-]+)\)$`)
 var claudeToolUseIDRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 var claudeToolUseInvalidCharRegex = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
+var claudeCodeRequestFieldOrder = []string{"messages", "system", "tools", "metadata", "max_tokens", "stream"}
 
 func buildFixedClaudeCodeSystem() []claudecode.ClaudeContent {
 	return buildFixedClaudeCodeSystemWithCacheSlots(2)
@@ -37,24 +38,41 @@ func marshalClaudeRequestBodyWithModelFirst(bodyMap map[string]json.RawMessage, 
 		return nil, fmt.Errorf("bodyMap is nil")
 	}
 
-	keys := make([]string, 0, len(bodyMap))
+	remainingKeys := make([]string, 0, len(bodyMap))
 	for key, raw := range bodyMap {
-		if key == "model" || len(raw) == 0 {
+		ordered := false
+		for _, orderedKey := range claudeCodeRequestFieldOrder {
+			if key == orderedKey {
+				ordered = true
+				break
+			}
+		}
+		if key == "model" || len(raw) == 0 || ordered {
 			continue
 		}
-		keys = append(keys, key)
+		remainingKeys = append(remainingKeys, key)
 	}
-	sort.Strings(keys)
+	sort.Strings(remainingKeys)
 
 	var buf bytes.Buffer
 	buf.WriteByte('{')
 	buf.WriteString(`"model":`)
 	buf.WriteString(strconv.Quote(model))
-	for _, key := range keys {
+	writeField := func(key string) {
+		raw, ok := bodyMap[key]
+		if !ok || len(raw) == 0 {
+			return
+		}
 		buf.WriteByte(',')
 		buf.WriteString(strconv.Quote(key))
 		buf.WriteByte(':')
-		buf.Write(bodyMap[key])
+		buf.Write(raw)
+	}
+	for _, key := range claudeCodeRequestFieldOrder {
+		writeField(key)
+	}
+	for _, key := range remainingKeys {
+		writeField(key)
 	}
 	buf.WriteByte('}')
 	return buf.Bytes(), nil
@@ -105,11 +123,7 @@ func PrepareClaudeCodeMessagesRequest(c *gin.Context, relayInfo *relaycommon.Rel
 		_ = json.Unmarshal(patchedMetadata, &claudeReq.Metadata)
 	}
 	if _, ok := bodyMap["tools"]; !ok && shouldSimulateClaudeCodeCLI(relayInfo.ChannelSetting) {
-		if toolsRaw, shouldInject, toolsErr := claudecode.GetEmbeddedCLIToolsRaw(); toolsErr != nil {
-			common.SysError("load Claude Code CLI tools failed: " + toolsErr.Error())
-		} else if shouldInject {
-			bodyMap["tools"] = toolsRaw
-		}
+		bodyMap["tools"] = json.RawMessage("[]")
 	}
 	removeClaudeCodeToolsInputExamples(bodyMap)
 
@@ -136,13 +150,14 @@ func BuildClaudeCodeNativeTestRequest(model string, stream bool) map[string]any 
 		"stream":     stream,
 		"max_tokens": 10,
 		"system":     buildFixedClaudeCodeSystem(),
-		"messages": []map[string]any{
+		"tools":      []claudecode.Tool{},
+		"messages": []claudecode.ClaudeMessage{
 			{
-				"role": "user",
-				"content": []map[string]any{
+				Role: "user",
+				Content: []claudecode.ClaudeContent{
 					{
-						"type": "text",
-						"text": "hi",
+						Type: "text",
+						Text: "hi",
 					},
 				},
 			},
