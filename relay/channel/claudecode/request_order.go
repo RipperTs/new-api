@@ -8,7 +8,7 @@ import (
 	"strconv"
 )
 
-var requestFieldOrder = []string{"messages", "system", "tools", "metadata", "max_tokens", "stream"}
+var requestFieldOrder = []string{"messages", "system", "tools", "metadata", "max_tokens", "thinking", "output_config", "stream"}
 
 func MarshalRequestBody(bodyMap map[string]json.RawMessage, model string) ([]byte, error) {
 	if bodyMap == nil {
