@@ -220,23 +220,29 @@ func SanitizeClaudeMessagesRaw(raw json.RawMessage) (json.RawMessage, bool) {
 }
 
 func SanitizeEmptyClaudeTextBlocks(body []byte) []byte {
-	var root map[string]any
+	patched, _ := sanitizeEmptyClaudeTextBlocks(body)
+	return patched
+}
+
+func sanitizeEmptyClaudeTextBlocks(body []byte) ([]byte, bool) {
+	var root map[string]json.RawMessage
 	if err := json.Unmarshal(body, &root); err != nil {
-		return body
+		return body, false
 	}
-	msgs, ok := root["messages"].([]any)
+	messagesRaw, ok := root["messages"]
 	if !ok {
-		return body
+		return body, false
 	}
-	if !sanitizeClaudeMessages(msgs) {
-		return body
+	patchedMessages, changed := SanitizeClaudeMessagesRaw(messagesRaw)
+	if !changed {
+		return body, false
 	}
-	root["messages"] = msgs
+	root["messages"] = patchedMessages
 	out, err := json.Marshal(root)
 	if err != nil {
-		return body
+		return body, false
 	}
-	return out
+	return out, true
 }
 
 func sanitizeClaudeMessages(msgs []any) bool {
@@ -344,29 +350,23 @@ func isThinkingSignatureError(msg string) bool {
 		strings.Contains(m, "invalid signature in thinking block")
 }
 
-func ensureMetadataUserID(body []byte, apiKey string) []byte {
-	var root map[string]any
+func ensureMetadataUserID(body []byte, apiKey string) ([]byte, bool) {
+	var root map[string]json.RawMessage
 	if err := json.Unmarshal(body, &root); err != nil {
-		return body
+		return body, false
 	}
 
-	metadata, ok := root["metadata"].(map[string]any)
-	if ok {
-		if userID, exists := metadata["user_id"].(string); exists && strings.TrimSpace(userID) != "" {
-			return body
-		}
-	} else {
-		metadata = make(map[string]any)
+	metadata, changed, err := EnsureMetadataUserIDRaw(root["metadata"], apiKey)
+	if err != nil || !changed {
+		return body, false
 	}
-
-	metadata["user_id"] = generateClaudeCodeUserID(apiKey)
 	root["metadata"] = metadata
 
 	patched, err := json.Marshal(root)
 	if err != nil {
-		return body
+		return body, false
 	}
-	return patched
+	return patched, true
 }
 
 func buildClaudeCodeDebugBody(bodyBytes []byte) any {
@@ -410,10 +410,23 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 		fmt.Printf("[ClaudeCode] Error reading request body: %v\n", err)
 		return nil, err
 	}
-	if info != nil && info.RelayMode != relayconstant.RelayModeClaudeMessages {
-		bodyBytes = ensureMetadataUserID(bodyBytes, info.ApiKey)
+	bodyChanged := false
+	if info == nil || info.RelayMode != relayconstant.RelayModeClaudeMessages {
+		if info != nil {
+			var changed bool
+			bodyBytes, changed = ensureMetadataUserID(bodyBytes, info.ApiKey)
+			bodyChanged = bodyChanged || changed
+		}
+		var changed bool
+		bodyBytes, changed = sanitizeEmptyClaudeTextBlocks(bodyBytes)
+		bodyChanged = bodyChanged || changed
 	}
-	bodyBytes = SanitizeEmptyClaudeTextBlocks(bodyBytes)
+	if bodyChanged {
+		bodyBytes, err = ReorderRequestBody(bodyBytes)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	attempt := 0
 	doOnce := func() (*http.Response, error) {
@@ -444,7 +457,12 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 				c.Set("claude_disable_interleaved_thinking", true)
 				retryBody := bodyBytes
 				if info != nil && info.RelayMode == relayconstant.RelayModeClaudeMessages {
-					retryBody = SanitizeEmptyClaudeTextBlocks(stripThinkingBlocks(bodyBytes))
+					retryBody, _ = sanitizeEmptyClaudeTextBlocks(stripThinkingBlocks(bodyBytes))
+					var orderErr error
+					retryBody, orderErr = ReorderRequestBody(retryBody)
+					if orderErr != nil {
+						return nil, orderErr
+					}
 				}
 				attempt++
 				req, buildErr := channel.BuildAPIRequest(a, c, info, bytes.NewReader(retryBody))
