@@ -11,11 +11,14 @@ export const getAvailabilityColor = (availability) => {
   if (availability === null || availability === undefined) {
     return '#94a3b8';
   }
-  if (availability >= 99.9) {
+  if (availability >= 90) {
     return '#16a34a';
   }
-  if (availability >= 99) {
-    return '#d97706';
+  if (availability >= 70) {
+    return '#ca8a04';
+  }
+  if (availability >= 50) {
+    return '#ea580c';
   }
   return '#dc2626';
 };
