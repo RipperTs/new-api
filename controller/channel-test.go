@@ -464,7 +464,7 @@ func testAllChannels(notify bool) error {
 
 			// enable channel
 			if !isChannelEnabled && service.ShouldEnableChannel(err, openaiWithStatusErr, channel.Status) {
-				service.EnableChannel(channel.Id, channel.Name, channel.Group)
+				service.EnableChannel(channel.Id)
 			}
 
 			channel.UpdateResponseTime(milliseconds)
