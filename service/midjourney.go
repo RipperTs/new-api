@@ -10,6 +10,7 @@ import (
 	"one-api/common"
 	"one-api/constant"
 	"one-api/dto"
+	"one-api/model"
 	relayconstant "one-api/relay/constant"
 	"one-api/setting"
 	"strconv"
@@ -205,6 +206,11 @@ func DoMidjourneyHttpRequest(c *gin.Context, timeout time.Duration, fullRequestU
 		req.Header.Set("mj-api-secret", auth)
 	}
 	defer cancel()
+	channelId := c.GetInt("channel_id")
+	requestFailed := true
+	defer func() {
+		model.RecordChannelRequest(channelId, requestFailed)
+	}()
 	resp, err := GetHttpClient().Do(req)
 	if err != nil {
 		common.SysError("do request failed: " + err.Error())
@@ -244,6 +250,10 @@ func DoMidjourneyHttpRequest(c *gin.Context, timeout time.Duration, fullRequestU
 				return MidjourneyErrorWithStatusCodeWrapper(constant.MjErrorUnknown, "unmarshal_response_body_failed", statusCode), responseBody, err
 			}
 		}
+	}
+	requestFailed = statusCode < http.StatusOK || statusCode >= http.StatusMultipleChoices
+	if !requestFailed && midjResponse.Code != 0 {
+		requestFailed = midjResponse.Code != 1 && midjResponse.Code != 21 && midjResponse.Code != 22
 	}
 	//log.Printf("midjResponse: %v", midjResponse)
 	//for k, v := range resp.Header {

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   API,
   isMobile,
@@ -36,6 +36,12 @@ import { IconList, IconTreeTriangleDown } from '@douyinfe/semi-icons';
 import { loadChannelModels } from './utils.js';
 import EditTagModal from '../pages/Channel/EditTagModal.js';
 import TextNumberInput from './custom/TextNumberInput.js';
+import { ChannelAvailabilityCell } from './ChannelAvailability.js';
+
+const ChannelAvailabilityModal = React.lazy(
+  () => import('./ChannelAvailabilityModal.js'),
+);
+const DEFAULT_AVAILABILITY_PERIOD = '24h';
 
 function renderTimestamp(timestamp) {
   return <>{timestamp2string(timestamp)}</>;
@@ -71,6 +77,103 @@ function renderTagType(type) {
     </Tag>
   );
 }
+
+const collectChannelIds = (records) => {
+  const channelIds = new Set();
+  records.forEach((record) => {
+    if (record.children === undefined) {
+      channelIds.add(record.id);
+      return;
+    }
+    record.children.forEach((channel) => channelIds.add(channel.id));
+  });
+  return Array.from(channelIds);
+};
+
+const calculateAvailability = (requestCount, errorCount) => {
+  if (requestCount === 0) {
+    return null;
+  }
+  return Math.round(((requestCount - errorCount) / requestCount) * 10000) / 100;
+};
+
+const getRecordAvailability = (record, availabilityByChannel) => {
+  if (!record) {
+    return undefined;
+  }
+  if (record.children === undefined) {
+    return availabilityByChannel[record.id];
+  }
+
+  const childStats = record.children
+    .map((channel) => availabilityByChannel[channel.id])
+    .filter(Boolean);
+  if (childStats.length === 0) {
+    return undefined;
+  }
+
+  const trendByTime = new Map();
+  let requestCount = 0;
+  let errorCount = 0;
+  childStats.forEach((stat) => {
+    requestCount += stat.request_count;
+    errorCount += stat.error_count;
+    stat.trend.forEach((point) => {
+      const current = trendByTime.get(point.bucket_time) || {
+        bucket_time: point.bucket_time,
+        request_count: 0,
+        error_count: 0,
+      };
+      current.request_count += point.request_count;
+      current.error_count += point.error_count;
+      trendByTime.set(point.bucket_time, current);
+    });
+  });
+
+  const trend = Array.from(trendByTime.values())
+    .sort((a, b) => a.bucket_time - b.bucket_time)
+    .map((point) => ({
+      ...point,
+      availability: calculateAvailability(
+        point.request_count,
+        point.error_count,
+      ),
+    }));
+
+  return {
+    channel_id: record.id,
+    request_count: requestCount,
+    error_count: errorCount,
+    availability: calculateAvailability(requestCount, errorCount),
+    trend,
+  };
+};
+
+const fetchChannelAvailability = async (records, period) => {
+  const channelIds = collectChannelIds(records);
+  if (channelIds.length === 0) {
+    return {};
+  }
+
+  const res = await API.post('/api/channel/availability', {
+    channel_ids: channelIds,
+    period,
+  });
+  if (res === undefined) {
+    return {};
+  }
+
+  const { success, message, data } = res.data;
+  if (!success) {
+    throw new Error(message);
+  }
+
+  const availabilityByChannel = {};
+  (data || []).forEach((stat) => {
+    availabilityByChannel[stat.channel_id] = stat;
+  });
+  return availabilityByChannel;
+};
 
 const ChannelsTable = () => {
   const columns = [
@@ -134,6 +237,21 @@ const ChannelsTable = () => {
       render: (text, record, index) => {
         return <div>{renderResponseTime(text)}</div>;
       }
+    },
+    {
+      title: '可用性（24 小时）',
+      dataIndex: 'availability',
+      width: 260,
+      render: (text, record) => {
+        const stat = getRecordAvailability(record, availabilityByChannel);
+        return (
+          <ChannelAvailabilityCell
+            stat={stat}
+            loading={availabilityLoading}
+            onClick={() => openAvailabilityDetails(record)}
+          />
+        );
+      },
     },
     {
       title: '优先级',
@@ -396,6 +514,21 @@ const ChannelsTable = () => {
   const [selectedChannels, setSelectedChannels] = useState([]);
   const [showEditPriority, setShowEditPriority] = useState(false);
   const [enableTagMode, setEnableTagMode] = useState(false);
+  const [availabilityByChannel, setAvailabilityByChannel] = useState({});
+  const [availabilityLoading, setAvailabilityLoading] = useState(false);
+  const [availabilityRecord, setAvailabilityRecord] = useState(null);
+  const [availabilityDetailPeriod, setAvailabilityDetailPeriod] = useState(
+    DEFAULT_AVAILABILITY_PERIOD,
+  );
+  const [availabilityDetailByChannel, setAvailabilityDetailByChannel] =
+    useState({});
+  const [availabilityDetailLoading, setAvailabilityDetailLoading] =
+    useState(false);
+
+  const pageData = useMemo(
+    () => channels.slice((activePage - 1) * pageSize, activePage * pageSize),
+    [activePage, channels, pageSize],
+  );
 
   const channelTypeOptions = [
     { label: '全部类型', value: '' },
@@ -600,6 +733,98 @@ const ChannelsTable = () => {
     fetchGroups().then();
     loadChannelModels().then();
   }, []);
+
+  useEffect(() => {
+    if (pageData.length === 0) {
+      setAvailabilityByChannel({});
+      setAvailabilityLoading(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    const loadAvailability = async () => {
+      setAvailabilityLoading(true);
+      setAvailabilityByChannel({});
+      try {
+        const nextAvailability = await fetchChannelAvailability(
+          pageData,
+          DEFAULT_AVAILABILITY_PERIOD,
+        );
+        if (cancelled) {
+          return;
+        }
+        setAvailabilityByChannel(nextAvailability);
+      } catch (error) {
+        if (!cancelled) {
+          showError(error.message || '渠道可用性数据加载失败');
+          setAvailabilityByChannel({});
+        }
+      } finally {
+        if (!cancelled) {
+          setAvailabilityLoading(false);
+        }
+      }
+    };
+
+    loadAvailability().then();
+    return () => {
+      cancelled = true;
+    };
+  }, [pageData]);
+
+  useEffect(() => {
+    if (availabilityRecord === null) {
+      setAvailabilityDetailByChannel({});
+      setAvailabilityDetailLoading(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    const loadAvailabilityDetail = async () => {
+      setAvailabilityDetailLoading(true);
+      setAvailabilityDetailByChannel({});
+      try {
+        const nextAvailability = await fetchChannelAvailability(
+          [availabilityRecord],
+          availabilityDetailPeriod,
+        );
+        if (!cancelled) {
+          setAvailabilityDetailByChannel(nextAvailability);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          showError(error.message || '渠道可用性详情加载失败');
+          setAvailabilityDetailByChannel({});
+        }
+      } finally {
+        if (!cancelled) {
+          setAvailabilityDetailLoading(false);
+        }
+      }
+    };
+
+    loadAvailabilityDetail().then();
+    return () => {
+      cancelled = true;
+    };
+  }, [availabilityDetailPeriod, availabilityRecord]);
+
+  const openAvailabilityDetails = (record) => {
+    setAvailabilityDetailPeriod(DEFAULT_AVAILABILITY_PERIOD);
+    setAvailabilityDetailByChannel({});
+    setAvailabilityDetailLoading(true);
+    setAvailabilityRecord(record);
+  };
+
+  const changeAvailabilityDetailPeriod = (period) => {
+    setAvailabilityDetailByChannel({});
+    setAvailabilityDetailLoading(true);
+    setAvailabilityDetailPeriod(period);
+  };
+
+  const closeAvailabilityDetails = () => {
+    setAvailabilityRecord(null);
+  };
 
   const manageChannel = async (id, action, record, value) => {
     let data = { id };
@@ -867,11 +1092,6 @@ const ChannelsTable = () => {
     }
   };
 
-  let pageData = channels.slice(
-    (activePage - 1) * pageSize,
-    activePage * pageSize
-  );
-
   const handlePageChange = (page) => {
     setActivePage(page);
     if (page === Math.ceil(channels.length / pageSize) + 1) {
@@ -958,6 +1178,33 @@ const ChannelsTable = () => {
 
   return (
     <>
+      {availabilityRecord !== null && (
+        <React.Suspense
+          fallback={
+            <Modal
+              visible
+              title='渠道可用性详情'
+              footer={null}
+              onCancel={closeAvailabilityDetails}
+            >
+              <div style={{ padding: 48, textAlign: 'center' }}>图表加载中</div>
+            </Modal>
+          }
+        >
+          <ChannelAvailabilityModal
+            visible
+            record={availabilityRecord}
+            stat={getRecordAvailability(
+              availabilityRecord,
+              availabilityDetailByChannel,
+            )}
+            period={availabilityDetailPeriod}
+            loading={availabilityDetailLoading}
+            onPeriodChange={changeAvailabilityDetailPeriod}
+            onCancel={closeAvailabilityDetails}
+          />
+        </React.Suspense>
+      )}
       <EditTagModal
         visible={showEditTag}
         tag={editingTag}

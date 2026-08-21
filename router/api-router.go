@@ -112,6 +112,7 @@ func SetApiRouter(router *gin.Engine) {
 
 			channelRoute.GET("/", controller.GetAllChannels)
 			channelRoute.GET("/search", controller.SearchChannels)
+			channelRoute.POST("/availability", controller.GetChannelAvailability)
 			channelRoute.GET("/models", controller.ChannelListModels)
 			channelRoute.GET("/:id", controller.GetChannel)
 			channelRoute.GET("/test", controller.TestAllChannels)

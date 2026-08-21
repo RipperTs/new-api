@@ -256,14 +256,25 @@ func relayRequest(c *gin.Context, relayMode int, channel *model.Channel) *dto.Op
 	addUsedChannel(c, channel.Id)
 	requestBody, _ := common.GetRequestBody(c)
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(requestBody))
-	return relayHandler(c, relayMode)
+	openaiErr := relayHandler(c, relayMode)
+	recordChannelRequest(channel.Id, openaiErr)
+	return openaiErr
 }
 
 func wssRequest(c *gin.Context, ws *websocket.Conn, relayMode int, channel *model.Channel) *dto.OpenAIErrorWithStatusCode {
 	addUsedChannel(c, channel.Id)
 	requestBody, _ := common.GetRequestBody(c)
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(requestBody))
-	return relay.WssHelper(c, ws)
+	openaiErr := relay.WssHelper(c, ws)
+	recordChannelRequest(channel.Id, openaiErr)
+	return openaiErr
+}
+
+func recordChannelRequest(channelId int, openaiErr *dto.OpenAIErrorWithStatusCode) {
+	if openaiErr != nil && (openaiErr.LocalError || common.IsClientDisconnectMessage(openaiErr.Error.Message)) {
+		return
+	}
+	model.RecordChannelRequest(channelId, openaiErr != nil)
 }
 
 func addUsedChannel(c *gin.Context, channelId int) {

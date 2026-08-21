@@ -100,12 +100,16 @@ func RelayTaskSubmit(c *gin.Context, relayMode int) (taskErr *dto.TaskError) {
 	// do request
 	resp, err := adaptor.DoRequest(c, relayInfo, requestBody)
 	if err != nil {
+		if !common.IsClientDisconnectError(err) {
+			model.RecordChannelRequest(relayInfo.ChannelId, true)
+		}
 		taskErr = service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
 		return
 	}
 	// handle response
 	if resp != nil && resp.StatusCode != http.StatusOK {
 		responseBody, _ := io.ReadAll(resp.Body)
+		model.RecordChannelRequest(relayInfo.ChannelId, true)
 		taskErr = service.TaskErrorWrapper(fmt.Errorf(string(responseBody)), "fail_to_fetch_task", resp.StatusCode)
 		return
 	}
@@ -133,6 +137,9 @@ func RelayTaskSubmit(c *gin.Context, relayMode int) (taskErr *dto.TaskError) {
 	}(c.Request.Context())
 
 	taskID, taskData, taskErr := adaptor.DoResponse(c, resp, relayInfo)
+	if taskErr == nil || (!taskErr.LocalError && !common.IsClientDisconnectError(taskErr.Error)) {
+		model.RecordChannelRequest(relayInfo.ChannelId, taskErr != nil)
+	}
 	if taskErr != nil {
 		return
 	}

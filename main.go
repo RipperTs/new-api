@@ -63,6 +63,8 @@ func main() {
 			common.FatalLog("failed to close database: " + err.Error())
 		}
 	}()
+	model.StartChannelAvailabilityStats()
+	defer model.FlushChannelAvailabilityStats()
 
 	// Initialize Redis
 	err = common.InitRedisClient()
