@@ -374,7 +374,6 @@ const LogsTable = () => {
                   opts: { style: { width: 240 } },
                 },
               }}
-              style={{ maxWidth: 240 }}
             >
               {text}
             </Paragraph>
@@ -394,7 +393,6 @@ const LogsTable = () => {
                 ellipsis={{
                   rows: 2,
                 }}
-                style={{ maxWidth: 240 }}
             >
               调用详情
             </Paragraph>
@@ -808,12 +806,14 @@ const LogsTable = () => {
           </>
         </Form>
         <Table
+          className='log-table'
           style={{ marginTop: 5 }}
           columns={columns}
           expandedRowRender={expandRowRender}
           expandRowByClick={true}
           dataSource={logs}
           rowKey="key"
+          scroll={{ x: 1600 }}
           pagination={{
             currentPage: activePage,
             pageSize: pageSize,

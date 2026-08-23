@@ -354,6 +354,7 @@ const ChannelsTable = () => {
     {
       title: '',
       dataIndex: 'operate',
+      className: 'channel-operation-column',
       render: (text, record, index) => {
         if (record.children === undefined) {
           return (
@@ -1369,6 +1370,7 @@ const ChannelsTable = () => {
         style={{ marginTop: 15 }}
         columns={columns}
         dataSource={pageData}
+        scroll={{ x: 1600 }}
         pagination={{
           currentPage: activePage,
           pageSize: pageSize,

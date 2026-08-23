@@ -60,6 +60,24 @@ body {
   .semi-table-tbody > .semi-table-row {
     border-bottom: 1px solid rgba(0, 0, 0, 0.1);
   }
+  .channel-table .semi-table-tbody,
+  .log-table .semi-table-tbody {
+    display: table-row-group !important;
+    width: auto !important;
+  }
+  .channel-table .semi-table-row,
+  .log-table .semi-table-row {
+    display: table-row !important;
+    width: auto !important;
+    border-bottom: 0;
+  }
+  .channel-table .semi-table-row-cell,
+  .log-table .semi-table-row-cell {
+    display: table-cell !important;
+    width: auto !important;
+    padding: 16px 8px !important;
+    border-bottom: 1px solid var(--semi-color-border) !important;
+  }
   .semi-space {
     /*display: block!important;*/
     display: flex;
@@ -81,6 +99,10 @@ body {
 .channel-table {
   .semi-table-tbody > .semi-table-row > .semi-table-row-cell {
     padding: 16px 8px;
+  }
+
+  .channel-operation-column {
+    white-space: nowrap;
   }
 }
 
